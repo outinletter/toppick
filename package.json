@@ -1,0 +1,12 @@
+{
+  "name": "toppick",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build_web.mjs",
+    "test": "node --test tools/test_cloudflare.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": { "wrangler": "4.135.0" }
+}

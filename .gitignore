@@ -31,3 +31,8 @@ local.properties
 *.keystore
 *.p12
 *.pfx
+/node_modules/
+/dist/
+/.wrangler/
+.dev.vars
+.dev.vars.*

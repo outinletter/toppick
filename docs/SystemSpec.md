@@ -1,6 +1,14 @@
 # TopPicks System Specification
 
-Last updated: 2026-09-20
+Last updated: 2026-09-21
+
+## Cloudflare dashboard hosting
+
+`wrangler.jsonc` builds the shared dashboard into `dist/` on deployment.
+The Worker serves static assets and allowlisted read-only JSON routes from an optional
+HTTPS `DATA_API_BASE_URL`. It does not execute the Windows collection engine.
+Missing/failed upstream data is shown as unavailable, never as current recommendations.
+Public refresh requests cannot trigger collection. See `CloudflareDeployment.md`.
 
 ## Mission
 

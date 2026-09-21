@@ -2626,7 +2626,17 @@ function tickMeta(){
   meta.textContent=`${metaBase} · ${rel}`;
 }
 async function load(){
-  const r=await fetch("/api/recommendations"); const d=await r.json();
+  let d;
+  try {
+    const r=await fetch("/api/recommendations"); d=await r.json();
+    if(!r.ok)throw new Error(d.message||"추천 데이터를 불러오지 못했습니다");
+  } catch(e) {
+    metaBase=e.message;lastLoadClientTime=Date.now();meta.textContent=metaBase;
+    metrics.innerHTML=metric("데이터 상태","사용 불가",escapeHtml(e.message));
+    shortItems.innerHTML="<tr><td colspan='8'>추천 데이터를 사용할 수 없습니다.</td></tr>";
+    longItems.innerHTML="<tr><td colspan='9'>추천 데이터를 사용할 수 없습니다.</td></tr>";
+    return;
+  }
   const top=d.top3||[]; const active=top.filter(x=>x.entryStatus!=="watchlist").length;
   const eg=d.entryGateSummary||{};
   metaBase=`최근 분석 ${d.generatedAt||"미확인"} · 자료 기준 ${d.recommendationDate||"미확인"}`;
@@ -2646,10 +2656,10 @@ async function load(){
   shortItems.innerHTML=shortPicks.map(x=>itemRow(x,"s")).join("")||"<tr><td colspan='8' class='loading'>데이터 없음</td></tr>";
   longItems.innerHTML=longPicks.map(x=>longItemRow(x,"l")).join("")||"<tr><td colspan='9' class='loading'>데이터 없음</td></tr>";
 }
-async function refresh(){meta.textContent="새 계산 요청됨";await fetch("/api/recommendations?refresh=1")}
+async function refresh(){if(globalThis.TOPPICKS_CLOUD){await Promise.all([load(),val(),loadTarget10()]);return;}meta.textContent="새 계산 요청됨";await fetch("/api/recommendations?refresh=1")}
 async function val(){
   try{
-    const r=await fetch("/api/top3-validation"); const d=await r.json(); const c=d.currentFormulaStatistics||{};
+    const r=await fetch("/api/top3-validation"); if(!r.ok)throw new Error('validation unavailable'); const d=await r.json(); const c=d.currentFormulaStatistics||{};
     const strategyBoxes=(c.strategyStatistics||[]).slice(0,4).map(x=>
       metric(x.strategyEngine||"전략", `${Number(x.averageD3Return||0).toFixed(2)}%`, `D+3 · n=${x.matured3DayCount||0}`)
     ).join("");
@@ -2672,6 +2682,7 @@ async function loadTarget10(){
   }catch(e){target10Status.textContent='연구 모델 결과를 불러오지 못했습니다';target10Items.innerHTML=''}
 }
 load();val();loadTarget10();
+if(globalThis.TOPPICKS_CLOUD)document.querySelector('button[onclick="refresh()"]').textContent='최신 자료 확인';
 const AUTO_REFRESH_MS=5*60*1000;
 const LIVE_POLL_MS=30*1000;
 let lastAutoRefresh=Date.now();
@@ -2684,7 +2695,7 @@ setInterval(async()=>{
     isRunning=p.status==="running";
     if(isRunning)meta.textContent=`${p.stageName||p.stage} ${p.percent}% ${p.message}`;
     if(p.status==="completed")load();
-    if(!isRunning && Date.now()-lastAutoRefresh>=AUTO_REFRESH_MS){lastAutoRefresh=Date.now();refresh();}
+    if(!globalThis.TOPPICKS_CLOUD && !isRunning && Date.now()-lastAutoRefresh>=AUTO_REFRESH_MS){lastAutoRefresh=Date.now();refresh();}
   }catch(e){}
 },5000);
 </script>
