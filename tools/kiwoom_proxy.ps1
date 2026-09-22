@@ -242,6 +242,7 @@ function Get-DartSnapshot([string]$Code) {
     }
     return @{
         available = $disclosures.status -in @('000', '013')
+        mediumEvidence = if ($financials) { Get-DartMediumEvidence $financials $year $reportCode } else { $null }
         financialAvailable = $null -ne $financials
         financialYear = if ($financials) { $year } else { $null }
         financialReportCode = if ($financials) { $reportCode } else { $null }
@@ -333,6 +334,7 @@ function Get-StockSnapshot([string]$Code) {
         dartDebtRatio = $dart.debtRatio
         dartOperatingProfit = $dart.operatingProfit
         dartNonPositiveEquity = $dart.nonPositiveEquity
+        mediumFinancialEvidence = $dart.mediumEvidence
         dartFinancialYear = $dart.financialYear
         dartFinancialReportCode = $dart.financialReportCode
         dartRiskPenalty = $dart.riskPenalty
@@ -1284,6 +1286,12 @@ function Get-AnalyzedStock([object]$Stock) {
         disclosureCatalystScore = $snapshot.dartCatalystScore
         disclosureCatalysts = @($snapshot.dartCatalysts)
         disclosureCatalystDisclosures = @($snapshot.dartCatalystDisclosures)
+        mediumFinancialEvidence = $snapshot.mediumFinancialEvidence
+        reportEvidence = [pscustomobject]@{
+            latestPublishedAt = if($latestReports.Count){[string](($latestReports|Sort-Object writeDate -Descending|Select-Object -First 1).writeDate)}else{$null}
+            uniqueBrokerCount = $latestReports.Count
+            method = 'published-report-targets-not-estimate-revision-history'
+        }
         reportHighlights = $reportHighlights
         narrativeSummary = $narrativeSummary
         consensusTrendScore = $consensusTrendScore
@@ -1900,7 +1908,7 @@ function Invoke-RecommendationGeneration {
             $null = Add-IntegratedUpsideEvidence $_ $upsideEvidenceMap ([datetimeoffset]$executionTime)
             $_ | Add-Member -NotePropertyName legacyRiseProbability -NotePropertyValue $_.riseProbability
             $_.riseProbability = $null
-            $medium = Get-MediumTermAssessment $_
+            $medium = Get-MediumTermAssessment $_ ([datetimeoffset]::Now)
             $_ | Add-Member -NotePropertyName mediumTerm -NotePropertyValue $medium
             $_ | Add-Member -NotePropertyName oneMonthScore -NotePropertyValue $medium.score
             $_ | Add-Member -NotePropertyName mediumTermScore -NotePropertyValue $medium.score
@@ -2250,7 +2258,7 @@ function Invoke-RecommendationGeneration {
         snapshotSchemaVersion = 1
         scoringFormulaVersion = 'short-term-v5-governed-evidence'
         governance = Get-RecommendationGovernance @($all|Where-Object {$_ -and $_.code}) @($items) $candidateTotal @($collectionFailures.ToArray()) $modelManifest (Get-ModelManifest $PSScriptRoot)
-        generatedAtISO = ([datetimeoffset]$executionTime).ToString('o')
+        generatedAtISO = ([datetimeoffset]::Now).ToString('o')
         candidateUniverse = $script:candidateUniverse
         pykrx = [pscustomobject]@{
             available = [bool]$pykrx.available
@@ -2261,7 +2269,8 @@ function Invoke-RecommendationGeneration {
         sectorRotation = $sectorRotation
         primaryHorizon = '1-3-months'
         mediumTerm = [pscustomobject]@{
-            formulaVersion='medium-term-v1';productionEnabled=$false;validationStatus='not-evaluated'
+            dataQuality = Get-MediumQualitySummary @($mediumUniverse.ToArray())
+            formulaVersion='medium-term-v2';productionEnabled=$false;validationStatus='not-evaluated'
             horizonTradingDays=@(20,40,60)
             items=@(Select-MediumTermCandidates @($mediumUniverse.ToArray()))
         }
@@ -2280,8 +2289,8 @@ function Invoke-RecommendationGeneration {
     $mediumSnapshotPath=Join-Path $mediumSnapshotDir "$($script:activeRunId).json"
     if(Test-Path -LiteralPath $mediumSnapshotPath){throw 'Medium-term snapshot already exists'}
     Write-JsonAtomic $mediumSnapshotPath ([ordered]@{
-        generatedAt=([datetimeoffset]$executionTime).ToString('o');recommendationDate=$recommendationDate
-        formulaVersion='medium-term-v1';productionEnabled=$false
+        generatedAt=([datetimeoffset]::Now).ToString('o');recommendationDate=$recommendationDate
+        formulaVersion='medium-term-v2';productionEnabled=$false
         items=@($result.mediumTerm.items);costAssumptionBps=30;entryConvention='next-session-open'
     }) 12
     $result.mediumTerm | Add-Member -NotePropertyName validation -NotePropertyValue (Update-MediumTermValidation $mediumSnapshotDir)
@@ -2564,7 +2573,7 @@ const candidateEntryState=x=>{
   return {label:"가능", cls:"b-buy", text:warnings.length?`주의 ${warnings.join(" · ")}`:"진입 가능 · 근접 사유 없음"};
 };
 const candidateEntryBadge=x=>{const e=candidateEntryState(x);return `<span class="badge ${e.cls}" title="${e.text}">${e.label}</span>`};
-const longEntryState=x=>({label:"연구·관망",cls:"b-watch",text:x.mediumTerm?"20·40·60거래일 성과 검증 전 · 주 1회 재검토":"중기 엔진 재계산 필요"});
+const longEntryState=x=>({label:"연구·관망",cls:"b-watch",text:x.mediumTerm?`자료 충족 ${x.mediumTerm.dataCoveragePct??"미측정"}% · 상승 확률 미검증`:"중기 엔진 재계산 필요"});
 const longEntryBadge=x=>{const e=longEntryState(x);return `<span class="badge ${e.cls}" title="${e.text}">${e.label}</span>`};
 const candidateEntryRank=x=>{
   const label=candidateEntryState(x).label;
@@ -2577,15 +2586,18 @@ function reasonHtml(x,horizon){
   const s=x.signals||{}; const positive=[]; const risk=[];
   const add=(list,condition,text)=>{if(condition)list.push(text)};
   if(horizon==='long'){
-    add(positive,Number(s.recentUpgradeBrokerCount||0)>0,`최근 3개월 목표가 상향 ${Number(s.recentUpgradeBrokerCount)}개 증권사`);
-    add(positive,s.simultaneousBuy===true,'외국인·기관 동시 순매수');
-    add(positive,x.sectorRotationStatus==='strong','업종 흐름 강세');
-    add(positive,Number(x.roe||0)>=10,`ROE ${Number(x.roe).toFixed(1)}%`);
-    add(positive,s.aboveMa20===true&&s.risingMa60===true,'20일선 상회·60일선 상승');
-    add(risk,x.targetUpside!=null&&Number(x.targetUpside)<0,`목표가 기준 상승여력 ${signed(x.targetUpside)}`);
-    add(risk,Number(x.debtRatio||0)>=150,`부채비율 ${Number(x.debtRatio).toFixed(1)}%`);
-    add(risk,Number(x.per||0)>=40,`PER ${Number(x.per).toFixed(1)}배`);
-    add(risk,Number(s.quarterProfitGrowth||0)<0,`최근 분기 영업이익 ${signed(s.quarterProfitGrowth)}`);
+    const m=x.mediumTerm||{};const f=m.financialEvidence||{};
+    add(positive,m.profitYoYPct!=null&&m.profitYoYPct>0,`DART 전년 동기 영업이익 ${signed(m.profitYoYPct)}`);
+    add(positive,m.revenueYoYPct!=null&&m.revenueYoYPct>0,`DART 전년 동기 매출 ${signed(m.revenueYoYPct)}`);
+    add(positive,m.components?.cashFlow>0,'공시 영업현금흐름 흑자');
+    add(positive,m.components?.flow20>0,'외국인 또는 기관 20·60일 동반 순매수');
+    add(positive,m.components?.trend>0,'60일 이동평균 상승');
+    add(risk,true,'과거 미사용 구간 검증 전 · 상승 확률 미산출');
+    add(risk,true,'과거 실적 추정치 변경 API 미연결');
+    const factorNames={earnings:'전년 동기 실적',reports:'리포트 목표가',financial:'재무 안정성',industryMomentum:'업종 흐름',valuation:'상대가치',trend:'추세',cashFlow:'영업현금흐름',flow20:'수급',riskPenalty:'위험 자료'};
+    add(risk,(m.missingFactors||[]).length>0,`자료 부족: ${(m.missingFactors||[]).map(k=>factorNames[k]||k).join(', ')}`);
+    add(risk,m.profitYoYPct!=null&&m.profitYoYPct<0,`전년 동기 영업이익 ${signed(m.profitYoYPct)}`);
+    add(risk,f.publishedDate,`공시 ${f.publishedDate} · 결산 기준 ${f.periodEnd||'미확인'}`);
   }else{
     add(positive,s.simultaneousBuy===true,'외국인·기관 동시 순매수');
     add(positive,s.volumeSurge===true,'거래량 증가 확인');
@@ -2624,7 +2636,7 @@ function longItemRow(x,idPrefix){
   const rid=`${idPrefix}-${x.code||x.name}`;
   modalStore.set(rid,{x,horizon:'long'});
   const perPbr=`${x.per?Number(x.per).toFixed(1):"-"} / ${x.pbr?Number(x.pbr).toFixed(1):"-"}`;
-  return `<tr class="clickrow" tabindex="0" aria-label="${escapeHtml(x.name||x.code)} 상세 근거" onclick="openModal('${rid}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('${rid}')}"><td data-label="종목">${stockCell(x)}</td><td data-label="중기점수" class="num"><span class="score">${Number(x.longTermScore||0).toFixed(1)}</span></td><td data-label="진입">${longEntryBadge(x)}</td><td data-label="PER/PBR">${perPbr}</td><td data-label="리포트" class="num">${x.reportCount??"-"}</td><td data-label="섹터">${sectorLabel(x.sectorRotationStatus)}</td><td data-label="부채비율" class="num">${x.debtRatio!=null?pct(x.debtRatio):"-"}</td><td data-label="상승여력" class="num">${x.targetUpside!=null?signed(x.targetUpside):"-"}</td><td data-label="거래대금" class="num">${fmt(x.signals?.averageTradingValue)}억</td></tr>`;
+  return `<tr class="clickrow" tabindex="0" aria-label="${escapeHtml(x.name||x.code)} 상세 근거" onclick="openModal('${rid}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('${rid}')}"><td data-label="종목">${stockCell(x)}</td><td data-label="중기점수" class="num"><span class="score">${Number(x.longTermScore||0).toFixed(1)}</span><div class="sub">자료 ${x.mediumTerm?.dataCoveragePct??"미측정"}%</div></td><td data-label="진입">${longEntryBadge(x)}</td><td data-label="PER/PBR">${perPbr}</td><td data-label="리포트" class="num">${x.reportCount??"-"}</td><td data-label="섹터">${sectorLabel(x.sectorRotationStatus)}</td><td data-label="부채비율" class="num">${x.debtRatio!=null?pct(x.debtRatio):"-"}</td><td data-label="상승여력" class="num">${x.targetUpside!=null?signed(x.targetUpside):"-"}</td><td data-label="거래대금" class="num">${fmt(x.signals?.averageTradingValue)}억</td></tr>`;
 }
 function metric(k,v,s){return `<div class="metric"><div class="k">${k}</div><div class="v mono">${v}</div><div class="s">${s||""}</div></div>`}
 let metaBase="";let lastLoadClientTime=0;let isRunning=false;
@@ -2656,16 +2668,16 @@ async function load(){
     metric("KOSPI",idx(mi.KOSPI?.value),signed(mi.KOSPI?.changeRate)),
     metric("KOSDAQ",idx(mi.KOSDAQ?.value),signed(mi.KOSDAQ?.changeRate)),
     metric("1~3개월 후보",d.mediumTerm?.items?.length??"미계산","성과 검증 전 · 연구·관망"),
-    metric("독립 근거 확보",d.governance?`${d.governance.evidenceCoveragePct}%`:"미측정",`수집 실패 ${d.governance?.collectionFailureCount??"미측정"} · 연구용`),
+    metric("자료 기준 통과",d.mediumTerm?.dataQuality?`${d.mediumTerm.dataQuality.eligibleCount}/${d.mediumTerm.dataQuality.analyzedCount}`:"미측정","충족도는 상승 확률이 아닙니다"),
   ].join("");
   const allItems=d.items||[];
   // 코스피·코스닥 구분 없이 상승 예상 점수가 가장 높은 종목을 그대로 상위 노출
   const shortPicks=allItems.slice().sort((a,b)=>score(b)-score(a)).slice(0,10);
   const longPicks=d.mediumTerm?.items||[];
-  const mtOutcomes=(d.mediumTerm?.validation?.items||[]).flatMap(x=>x.outcomes||[]);
+  const mtOutcomes=(d.mediumTerm?.validation?.items||[]).filter(x=>x.formulaVersion===d.mediumTerm?.formulaVersion).flatMap(x=>x.outcomes||[]);
   document.getElementById('mediumValidation').textContent=d.mediumTerm?`20/40/60거래일 관측 완료: ${[20,40,60].map(h=>mtOutcomes.filter(x=>x.horizon===h&&x.status==='observed').length).join(' / ')}건 · 비용 가정 왕복 0.30% · 상승 확률 미검증`:'중기 엔진 재계산 필요';
   shortItems.innerHTML=shortPicks.map(x=>itemRow(x,"s")).join("")||"<tr><td colspan='8' class='loading'>데이터 없음</td></tr>";
-  longItems.innerHTML=longPicks.map(x=>longItemRow(x,"l")).join("")||"<tr><td colspan='9' class='loading'>데이터 없음</td></tr>";
+  longItems.innerHTML=longPicks.map(x=>longItemRow(x,"l")).join("")||"<tr><td colspan='9' class='loading'>자료 기준을 충족하는 중기 후보가 없습니다.</td></tr>";
 }
 async function refresh(){if(globalThis.TOPPICKS_CLOUD){await Promise.all([load(),val(),loadTarget10()]);return;}meta.textContent="새 계산 요청됨";await fetch("/api/recommendations?refresh=1")}
 async function val(){

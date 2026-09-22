@@ -195,6 +195,12 @@ def collect(stock, code, start, end):
     }
 
 
+def initialize_krx():
+    from pykrx import stock
+    from pykrx.website.comm.webio import get_session
+    return stock, get_session() is not None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--codes", required=True)
@@ -211,10 +217,15 @@ def main():
         print(json.dumps(result, ensure_ascii=True, allow_nan=False))
         return
 
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        from pykrx import stock
-        from pykrx.website.comm.webio import get_session
-        authenticated = get_session() is not None
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            stock, authenticated = initialize_krx()
+    except Exception as error:
+        result['authenticationStatus'] = 'unavailable'
+        result['status'] = 'KRX session initialization failed'
+        result['errorType'] = type(error).__name__
+        print(json.dumps(result, ensure_ascii=True, allow_nan=False))
+        return
     result["authenticationStatus"] = "authenticated" if authenticated else "unavailable"
     if not authenticated:
         result["status"] = "KRX authenticated session unavailable"

@@ -1,13 +1,26 @@
 import json
+import contextlib
+import io
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
 from collect_pykrx import collect, number
+import collect_pykrx
 
 
 class CollectionTests(unittest.TestCase):
+    def test_session_initialization_failure_is_unavailable_json(self):
+        output = io.StringIO()
+        with patch.object(collect_pykrx, 'load_krx_credentials'), patch.object(collect_pykrx, 'initialize_krx', side_effect=ValueError('private-details')), patch.dict('os.environ', {'KRX_ID':'test','KRX_PW':'test'}), patch('sys.argv',['collector','--codes','005930']), contextlib.redirect_stdout(output):
+            collect_pykrx.main()
+        result=json.loads(output.getvalue())
+        self.assertFalse(result['available'])
+        self.assertEqual(result['authenticationStatus'],'unavailable')
+        self.assertEqual(result['items'],{})
+        self.assertNotIn('private-details',output.getvalue())
+
     def source(self, count=60):
         index = pd.bdate_range(end="2026-09-18", periods=count)
         frame = pd.DataFrame({"외국인": 10., "금융투자": 1., "보험": 1., "투신": 1.,
