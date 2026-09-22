@@ -6,7 +6,7 @@ Build and maintain a Korean stock recommendation and validation platform.
 
 Primary objective:
 
-- Select Korean stocks with the highest expected upside over the next 1 to 3 trading days.
+- Select Korean stock research candidates for 1 to 3 months (20/40/60 trading days), with the legacy short-term engine retained for comparison.
 
 Do not optimize for simple win rate.
 

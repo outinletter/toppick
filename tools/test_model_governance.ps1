@@ -31,5 +31,5 @@ Assert ($audit.evidenceCoveragePct -eq 50 -and $audit.collectionFailureCount -eq
 Assert ($audit.moduleAvailableCounts.risk -eq 1 -and $audit.moduleAvailableCounts.flow -eq 0) 'Unknown module must not count as verified'
 Assert (-not $audit.productionEnabled -and $audit.blockers -contains 'source-code-changed-during-run') 'Changed code cannot claim validated production status'
 $manifest=Get-ModelManifest $PSScriptRoot
-Assert ($manifest.fingerprint.Length -eq 64 -and $manifest.files.Count -eq 8) 'Model fingerprint must cover decision, data and validation modules'
+Assert ($manifest.fingerprint.Length -eq 64 -and $manifest.files.Count -eq 9 -and $manifest.files.Contains('medium_term.ps1')) 'Model fingerprint must cover decision, data and validation modules'
 Write-Output "PASS $checks model governance assertions"

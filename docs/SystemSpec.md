@@ -1,6 +1,6 @@
 # TopPicks System Specification
 
-Last updated: 2026-09-21
+Last updated: 2026-09-22
 
 ## Cloudflare dashboard hosting
 
@@ -14,13 +14,13 @@ Public refresh requests cannot trigger collection. See `CloudflareDeployment.md`
 
 TopPicks is an analysis-first Korean stock recommendation and validation system.
 
-The current recommendation horizon is 1 to 3 trading days.
+The primary dashboard horizon is 1 to 3 months (20/40/60 trading days).
 
 The system does not perform live trading execution. It selects, stores, monitors, and validates recommendation candidates.
 
 ## Primary Output
 
-The main output is AI TOP 3 TODAY.
+The primary web output is the medium-term research candidate list. AI TOP 3 TODAY remains the legacy short-term output. See MediumTermEngine.md for weights, observation rules and limitations.
 
 Each recommendation run produces:
 
@@ -39,9 +39,9 @@ Each recommendation run produces:
 
 ## Current Recommendation Horizon
 
-The system is optimized for 1 to 3 trading day movement.
+The medium-term research engine uses fixed fundamental, valuation, 60-day trend and 20-day flow weights.
 
-It is not currently optimized for 1 month or 1 to 3 month holding periods.
+Medium-term performance is not validated. Existing short-term TOP3/API fields remain legacy outputs; the dashboard primary list uses mediumTerm.items.
 
 ## Data Collection
 

@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\data_quality.ps1"
 . "$PSScriptRoot\upside_bridge.ps1"
 . "$PSScriptRoot\model_governance.ps1"
+. "$PSScriptRoot\medium_term.ps1"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $appKeyPath = Join-Path $projectRoot 'key\44125103_appkey.txt'
 $secretKeyPath = Join-Path $projectRoot 'key\44125103_secretkey.txt'
@@ -1843,6 +1844,7 @@ function Invoke-RecommendationGeneration {
         }
     }
     Set-RecommendationProgress 'running' 'scoring' '점수 및 확률 계산' 82 '시장 국면 가중치와 상대가치 점수를 계산하고 있습니다.'
+    $mediumUniverse = [System.Collections.Generic.List[object]]::new()
     $items = foreach ($market in @('KOSPI', 'KOSDAQ')) {
         $pool = @($all | Where-Object {
             $_.market -eq $market -and $_.liquid -and
@@ -1898,18 +1900,12 @@ function Invoke-RecommendationGeneration {
             $null = Add-IntegratedUpsideEvidence $_ $upsideEvidenceMap ([datetimeoffset]$executionTime)
             $_ | Add-Member -NotePropertyName legacyRiseProbability -NotePropertyValue $_.riseProbability
             $_.riseProbability = $null
-            $_ | Add-Member -NotePropertyName oneMonthScore -NotePropertyValue $shortTermScore
-            $_ | Add-Member -NotePropertyName mediumTermScore -NotePropertyValue $shortTermScore
-            # 장기 점수: 실적·리포트·재무·업종 펀더멘털과 저평가(밸류에이션)를 100점 만점으로 환산 (단기 과열/수급 지표는 제외)
-            $longTermScore = [math]::Max(0, [math]::Min(100, (
-                ($_.scoreBreakdown.earnings / 25 * 34) +
-                ($_.scoreBreakdown.reports / 16 * 20) +
-                ($_.scoreBreakdown.financial / 5 * 14) +
-                ($_.scoreBreakdown.industryMomentum / 10 * 12) +
-                ($valuationScore / 10 * 20) -
-                $_.scoreBreakdown.riskPenalty
-            )))
-            $_ | Add-Member -NotePropertyName longTermScore -NotePropertyValue $longTermScore
+            $medium = Get-MediumTermAssessment $_
+            $_ | Add-Member -NotePropertyName mediumTerm -NotePropertyValue $medium
+            $_ | Add-Member -NotePropertyName oneMonthScore -NotePropertyValue $medium.score
+            $_ | Add-Member -NotePropertyName mediumTermScore -NotePropertyValue $medium.score
+            $_ | Add-Member -NotePropertyName longTermScore -NotePropertyValue $medium.score
+            $mediumUniverse.Add($_)
             if ($valuationScore -ge 6) {
                 $label = if ($industryPool.Count -ge 3) { '동종 업종 대비 저평가' } else { '시장 후보군 대비 저평가' }
                 $_.reasons = @($_.reasons + $label | Select-Object -First 3)
@@ -2263,6 +2259,12 @@ function Invoke-RecommendationGeneration {
         marketRegime = $marketRegime
         marketIndexes = $marketIndexes
         sectorRotation = $sectorRotation
+        primaryHorizon = '1-3-months'
+        mediumTerm = [pscustomobject]@{
+            formulaVersion='medium-term-v1';productionEnabled=$false;validationStatus='not-evaluated'
+            horizonTradingDays=@(20,40,60)
+            items=@(Select-MediumTermCandidates @($mediumUniverse.ToArray()))
+        }
         items = @($items)
         fixedItems = @($script:fixedShadowItems)
         top3 = $top3
@@ -2273,7 +2275,17 @@ function Invoke-RecommendationGeneration {
     $directory = Split-Path -Parent $recommendationPath
     if (-not (Test-Path $directory)) { New-Item -ItemType Directory -Path $directory | Out-Null }
     Set-RecommendationProgress 'running' 'saving' '결과 저장' 97 '추천 스냅숏과 검증 데이터를 저장하고 있습니다.'
-    Write-JsonAtomic $recommendationPath $result 8
+    $mediumSnapshotDir=Join-Path $projectRoot 'reports\medium-term-snapshots'
+    New-Item -ItemType Directory -Path $mediumSnapshotDir -Force | Out-Null
+    $mediumSnapshotPath=Join-Path $mediumSnapshotDir "$($script:activeRunId).json"
+    if(Test-Path -LiteralPath $mediumSnapshotPath){throw 'Medium-term snapshot already exists'}
+    Write-JsonAtomic $mediumSnapshotPath ([ordered]@{
+        generatedAt=([datetimeoffset]$executionTime).ToString('o');recommendationDate=$recommendationDate
+        formulaVersion='medium-term-v1';productionEnabled=$false
+        items=@($result.mediumTerm.items);costAssumptionBps=30;entryConvention='next-session-open'
+    }) 12
+    $result.mediumTerm | Add-Member -NotePropertyName validation -NotePropertyValue (Update-MediumTermValidation $mediumSnapshotDir)
+    Write-JsonAtomic $recommendationPath $result 12
     $pitDateDirectory = Join-Path $pitSnapshotRoot ($recommendationDate -replace '-', '')
     if (-not (Test-Path -LiteralPath $pitDateDirectory)) {
         New-Item -ItemType Directory -Path $pitDateDirectory -Force | Out-Null
@@ -2461,7 +2473,7 @@ function Get-DashboardHtml {
     <div id="metrics" class="statusbar"></div>
 
   </div>
-  <nav class="section-nav" aria-label="대시보드 목차"><a href="#shortSection">단기 후보</a><a href="#longSection">장기 후보</a><a href="#researchSection">검증 데이터</a></nav>
+  <nav class="section-nav" aria-label="대시보드 목차"><a href="#longSection">1~3개월 후보</a><a href="#shortSection">단기 참고</a><a href="#researchSection">검증 데이터</a></nav>
   <div class="notice">점수는 상승 확률이 아닙니다. 관망·차단 사유를 먼저 확인하고, 종목을 선택해 상세 근거를 살펴보세요.</div>
   <div class="flow-layout">
     <section class="panel" id="shortSection">
@@ -2470,9 +2482,10 @@ function Get-DashboardHtml {
       <div class="scroll"><table class="tbl-short"><thead><tr><th>종목 / 시장</th><th class="num">선정점수</th><th>진입</th><th>핵심 사유</th><th>섹터</th><th class="num">RSI</th><th class="num">이격</th><th class="num">거래대금</th></tr></thead><tbody id="shortItems"><tr><td colspan="8" class="loading">로딩 중</td></tr></tbody></table></div>
     </section>
     <section class="panel" id="longSection">
-      <h2><span class="section-kicker">FUNDAMENTALS</span>장기 관찰 후보</h2>
-      <p class="section-description">실적 전망·재무 안정성·기업가치를 비교합니다. 장기 점수가 정해진 보유 기간을 뜻하지는 않습니다.</p>
-      <div class="scroll"><table class="tbl-long"><thead><tr><th>종목 / 시장</th><th class="num">장기점수</th><th>진입</th><th>PER/PBR</th><th>리포트</th><th>섹터</th><th class="num">부채비율</th><th class="num">상승여력</th><th class="num">거래대금</th></tr></thead><tbody id="longItems"><tr><td colspan="9" class="loading">로딩 중</td></tr></tbody></table></div>
+      <h2><span class="section-kicker">1~3개월 · 20/40/60거래일</span>중기 상승 관찰 후보</h2>
+      <p class="section-description">실적·재무·기업가치·60일 추세를 평가합니다. 주 1회 재검토, 최대 60거래일 관찰 기준이며 상승을 보장하는 보유 기간은 아닙니다. 별도 성과 검증 전에는 연구·관망으로 표시합니다.</p>
+      <div id="mediumValidation" class="section-description">중기 엔진 재계산 대기</div>
+      <div class="scroll"><table class="tbl-long"><thead><tr><th>종목 / 시장</th><th class="num">중기점수</th><th>진입</th><th>PER/PBR</th><th>리포트</th><th>섹터</th><th class="num">부채비율</th><th class="num">상승여력</th><th class="num">거래대금</th></tr></thead><tbody id="longItems"><tr><td colspan="9" class="loading">로딩 중</td></tr></tbody></table></div>
     </section>
   </div>
   <details class="panel research-panel" id="researchSection"><summary>연구 모델 · 검증 데이터</summary>
@@ -2541,21 +2554,7 @@ const candidateEntryState=x=>{
   return {label:"가능", cls:"b-buy", text:warnings.length?`주의 ${warnings.join(" · ")}`:"진입 가능 · 근접 사유 없음"};
 };
 const candidateEntryBadge=x=>{const e=candidateEntryState(x);return `<span class="badge ${e.cls}" title="${e.text}">${e.label}</span>`};
-const longEntryState=x=>{
-  const ls=Number(x.longTermScore||0);
-  const debt=x.debtRatio;
-  const sector=x.sectorRotationStatus||"unknown";
-  const blockers=[];
-  if(ls<45) blockers.push(`장기점수 ${ls.toFixed(1)}<45`);
-  if(debt!=null && Number(debt)>=250) blockers.push(`부채비율 ${Number(debt).toFixed(1)}%>=250%`);
-  if(x.targetUpside!=null && Number(x.targetUpside)<0) blockers.push("상승여력 마이너스");
-  if(blockers.length) return {label:ls>=45?"차단":"관망", cls:ls>=45?"b-block":"b-watch", text:blockers.join(" · ")};
-  const warnings=[];
-  if(debt!=null && Number(debt)>=150) warnings.push(`부채비율 ${Number(debt).toFixed(1)}%`);
-  if((x.reportCount||0)<3) warnings.push(`리포트 ${x.reportCount||0}건`);
-  if(sector==="weak") warnings.push("섹터 weak");
-  return {label:"가능", cls:"b-buy", text:warnings.length?`주의 ${warnings.join(" · ")}`:"장기 진입 조건 충족"};
-};
+const longEntryState=x=>({label:"연구·관망",cls:"b-watch",text:x.mediumTerm?"20·40·60거래일 성과 검증 전 · 주 1회 재검토":"중기 엔진 재계산 필요"});
 const longEntryBadge=x=>{const e=longEntryState(x);return `<span class="badge ${e.cls}" title="${e.text}">${e.label}</span>`};
 const candidateEntryRank=x=>{
   const label=candidateEntryState(x).label;
@@ -2597,7 +2596,7 @@ function openModal(rid){
   const entry=modalStore.get(rid);
   if(!entry) return;
   const x=entry.x;
-  const scoreLabel=entry.horizon==='long'?`장기 ${Number(x.longTermScore||0).toFixed(1)}점`:`단기 ${score(x).toFixed(1)}점`;
+  const scoreLabel=entry.horizon==='long'?`1~3개월 ${Number(x.longTermScore||0).toFixed(1)}점`:`단기 ${score(x).toFixed(1)}점`;
   modalTitle.textContent=`${x.name||"-"} (${x.code||""}) · ${x.market||"-"} · ${scoreLabel}`;
   modalBody.innerHTML=reasonHtml(x,entry.horizon);
   modalOverlay.classList.add('open');
@@ -2615,7 +2614,7 @@ function longItemRow(x,idPrefix){
   const rid=`${idPrefix}-${x.code||x.name}`;
   modalStore.set(rid,{x,horizon:'long'});
   const perPbr=`${x.per?Number(x.per).toFixed(1):"-"} / ${x.pbr?Number(x.pbr).toFixed(1):"-"}`;
-  return `<tr class="clickrow" tabindex="0" aria-label="${escapeHtml(x.name||x.code)} 상세 근거" onclick="openModal('${rid}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('${rid}')}"><td data-label="종목">${stockCell(x)}</td><td data-label="장기점수" class="num"><span class="score">${Number(x.longTermScore||0).toFixed(1)}</span></td><td data-label="진입">${longEntryBadge(x)}</td><td data-label="PER/PBR">${perPbr}</td><td data-label="리포트" class="num">${x.reportCount??"-"}</td><td data-label="섹터">${sectorLabel(x.sectorRotationStatus)}</td><td data-label="부채비율" class="num">${x.debtRatio!=null?pct(x.debtRatio):"-"}</td><td data-label="상승여력" class="num">${x.targetUpside!=null?signed(x.targetUpside):"-"}</td><td data-label="거래대금" class="num">${fmt(x.signals?.averageTradingValue)}억</td></tr>`;
+  return `<tr class="clickrow" tabindex="0" aria-label="${escapeHtml(x.name||x.code)} 상세 근거" onclick="openModal('${rid}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('${rid}')}"><td data-label="종목">${stockCell(x)}</td><td data-label="중기점수" class="num"><span class="score">${Number(x.longTermScore||0).toFixed(1)}</span></td><td data-label="진입">${longEntryBadge(x)}</td><td data-label="PER/PBR">${perPbr}</td><td data-label="리포트" class="num">${x.reportCount??"-"}</td><td data-label="섹터">${sectorLabel(x.sectorRotationStatus)}</td><td data-label="부채비율" class="num">${x.debtRatio!=null?pct(x.debtRatio):"-"}</td><td data-label="상승여력" class="num">${x.targetUpside!=null?signed(x.targetUpside):"-"}</td><td data-label="거래대금" class="num">${fmt(x.signals?.averageTradingValue)}억</td></tr>`;
 }
 function metric(k,v,s){return `<div class="metric"><div class="k">${k}</div><div class="v mono">${v}</div><div class="s">${s||""}</div></div>`}
 let metaBase="";let lastLoadClientTime=0;let isRunning=false;
@@ -2646,13 +2645,15 @@ async function load(){
   metrics.innerHTML=[
     metric("KOSPI",idx(mi.KOSPI?.value),signed(mi.KOSPI?.changeRate)),
     metric("KOSDAQ",idx(mi.KOSDAQ?.value),signed(mi.KOSDAQ?.changeRate)),
-    metric("진입 후보",active,`관망 ${top.length-active}`),
+    metric("1~3개월 후보",d.mediumTerm?.items?.length??"미계산","성과 검증 전 · 연구·관망"),
     metric("독립 근거 확보",d.governance?`${d.governance.evidenceCoveragePct}%`:"미측정",`수집 실패 ${d.governance?.collectionFailureCount??"미측정"} · 연구용`),
   ].join("");
   const allItems=d.items||[];
   // 코스피·코스닥 구분 없이 상승 예상 점수가 가장 높은 종목을 그대로 상위 노출
   const shortPicks=allItems.slice().sort((a,b)=>score(b)-score(a)).slice(0,10);
-  const longPicks=allItems.slice().sort((a,b)=>Number(b.longTermScore||0)-Number(a.longTermScore||0)).slice(0,10);
+  const longPicks=d.mediumTerm?.items||[];
+  const mtOutcomes=(d.mediumTerm?.validation?.items||[]).flatMap(x=>x.outcomes||[]);
+  document.getElementById('mediumValidation').textContent=d.mediumTerm?`20/40/60거래일 관측 완료: ${[20,40,60].map(h=>mtOutcomes.filter(x=>x.horizon===h&&x.status==='observed').length).join(' / ')}건 · 비용 가정 왕복 0.30% · 상승 확률 미검증`:'중기 엔진 재계산 필요';
   shortItems.innerHTML=shortPicks.map(x=>itemRow(x,"s")).join("")||"<tr><td colspan='8' class='loading'>데이터 없음</td></tr>";
   longItems.innerHTML=longPicks.map(x=>longItemRow(x,"l")).join("")||"<tr><td colspan='9' class='loading'>데이터 없음</td></tr>";
 }
@@ -2681,6 +2682,7 @@ async function loadTarget10(){
     target10Items.innerHTML=(d.items||[]).slice(0,10).map(x=>`<tr><td data-label="종목">${escapeHtml(x.name||x.code)}</td><td data-label="1일 목표 / 손절">${pair(x,'1')}</td><td data-label="2일 목표 / 손절">${pair(x,'2')}</td><td data-label="3일 목표 / 손절">${pair(x,'3')}</td><td data-label="기대 순수익">${x.forecast?Number(x.forecast.horizons['3'].expectedNetReturnPct).toFixed(2)+'%':'—'}</td><td data-label="상태">연구·관망</td></tr>`).join('')||'<tr><td colspan="6">사용 가능한 확률 없음</td></tr>';
   }catch(e){target10Status.textContent='연구 모델 결과를 불러오지 못했습니다';target10Items.innerHTML=''}
 }
+document.querySelector(".flow-layout").prepend(document.getElementById("longSection"));
 load();val();loadTarget10();
 if(globalThis.TOPPICKS_CLOUD)document.querySelector('button[onclick="refresh()"]').textContent='최신 자료 확인';
 const AUTO_REFRESH_MS=5*60*1000;

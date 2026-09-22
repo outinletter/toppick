@@ -1,6 +1,6 @@
-function Get-ModelManifest([string]$ToolRoot) {
+﻿function Get-ModelManifest([string]$ToolRoot) {
     $files=[ordered]@{}
-    foreach ($name in @('kiwoom_proxy.ps1','entry_risk.ps1','data_quality.ps1','upside_bridge.ps1','model_governance.ps1','independent_upside.py','collect_pykrx.py','validation_core.ps1')) {
+    foreach ($name in @('kiwoom_proxy.ps1','entry_risk.ps1','data_quality.ps1','upside_bridge.ps1','model_governance.ps1','independent_upside.py','collect_pykrx.py','validation_core.ps1','medium_term.ps1')) {
         $files[$name]=(Get-FileHash -LiteralPath (Join-Path $ToolRoot $name) -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $bytes=[Text.Encoding]::UTF8.GetBytes(($files|ConvertTo-Json -Compress))
