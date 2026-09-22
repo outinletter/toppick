@@ -1,8 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../web/worker.mjs';
+import { ingest, readDataset } from '../web/storage.mjs';
 
 const request = path => new Request('https://toppick.example' + path);
+test('D1 ingestion requires a secret, validates input and commits together', async () => {
+  const statements=[];
+  const env={UPLOAD_TOKEN:'test-only',DB:{prepare(sql){return {bind(...values){return {sql,values};}}},async batch(rows){statements.push(...rows);}}};
+  const data={kind:'recommendations',sourceAt:'2026-01-01T00:00:00Z',data:{items:[],mediumTerm:{items:[]}}};
+  const make=(body,token='test-only')=>new Request('https://test/api/ingest',{method:'POST',headers:{Authorization:`Bearer ${token}`},body:JSON.stringify(body)});
+  assert.equal((await ingest(make(data,'wrong'),env)).status,401);
+  assert.equal(statements.length,0);
+  assert.equal((await ingest(make({...data,sourceAt:'invalid'}),env)).status,400);
+  assert.equal((await ingest(make({...data,data:{items:[]}}),env)).status,400);
+  assert.equal((await ingest(make(data),env)).status,200);
+  assert.equal(statements.length,2);
+  assert.match(statements[1].sql,/excluded.source_at > published_datasets.source_at/);
+  assert.equal(statements[0].values[2],'2026-01-01');
+});
+test('D1 reads retain source age and return unavailable before initial upload',async()=>{
+  const env={DB:{prepare(){return {bind(){return {first:async()=>null};}}}}};
+  assert.equal((await readDataset('recommendations',env)).status,503);
+  env.DB.prepare=()=>({bind:()=>({first:async()=>({source_at:'2020-01-01T00:00:00Z',received_at:new Date().toISOString(),payload:'{"items":[]}'})})});
+  assert.equal((await (await readDataset('recommendations',env)).json()).storage.stale,true);
+});
 test('unconnected data is unavailable, not an empty successful analysis', async () => {
   const r = await worker.fetch(request('/api/recommendations'), {});
   assert.equal(r.status, 503);

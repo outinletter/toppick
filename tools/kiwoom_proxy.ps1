@@ -2391,6 +2391,16 @@ function Invoke-RecommendationGeneration {
             Write-JsonAtomic $target10Output @{ status='forecast-failed'; productionEnabled=$false; items=@() } 4
         }
     }
+    $cloudConfig=Join-Path $projectRoot 'key\cloudflare-upload.json'
+    if(Test-Path -LiteralPath $cloudConfig){
+        try{
+            $publishResult=& $pykrxPythonPath (Join-Path $PSScriptRoot 'publish_cloudflare.py') --config $cloudConfig
+            if($LASTEXITCODE -ne 0){throw 'Cloudflare upload failed'}
+            Write-JsonAtomic (Join-Path $projectRoot 'reports\cloudflare-publish-status.json') @{status='uploaded';updatedAt=(Get-Date).ToString('o');datasets=($publishResult|ConvertFrom-Json)} 5
+        }catch{
+            Write-JsonAtomic (Join-Path $projectRoot 'reports\cloudflare-publish-status.json') @{status='failed';updatedAt=(Get-Date).ToString('o');message='Cloudflare upload failed; local reports retained for retry'} 3
+        }
+    }
     Set-RecommendationProgress 'completed' 'completed' '추천 분석 완료' 100 '추천 분석과 결과 저장이 완료되었습니다.' $candidateTotal $candidateTotal
     return $result
 }
@@ -2638,7 +2648,7 @@ async function load(){
   }
   const top=d.top3||[]; const active=top.filter(x=>x.entryStatus!=="watchlist").length;
   const eg=d.entryGateSummary||{};
-  metaBase=`최근 분석 ${d.generatedAt||"미확인"} · 자료 기준 ${d.recommendationDate||"미확인"}`;
+  metaBase=`최근 분석 ${d.generatedAt||"미확인"} · 자료 기준 ${d.recommendationDate||"미확인"}${d.storage?" · D1 저장 자료":""}${d.storage?.stale?" · 96시간 이상 경과: 재수집 필요":""}`;
   lastLoadClientTime=Date.now();
   meta.textContent=`${metaBase} · 0초 전 확인`;
   const mi=d.marketIndexes||{};

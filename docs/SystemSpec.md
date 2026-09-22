@@ -4,6 +4,12 @@ Last updated: 2026-09-22
 
 ## Cloudflare dashboard hosting
 
+The production Worker is bound to D1 `toppick-data`. Windows publishes stored recommendation,
+validation and target10 datasets through authenticated POST `/api/ingest` after generation.
+The dashboard reads D1 without a Tunnel. Newer source timestamps replace current records;
+first daily snapshots are immutable. Source time and upload time remain separate, and data
+older than 96 hours is labelled stale. Upload failures retain local results for retry.
+
 `wrangler.jsonc` builds the shared dashboard into `dist/` on deployment.
 The Worker serves static assets and allowlisted read-only JSON routes from an optional
 HTTPS `DATA_API_BASE_URL`. It does not execute the Windows collection engine.

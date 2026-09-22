@@ -1,3 +1,4 @@
+import { ingest, readDataset } from './storage.mjs';
 const routes = new Set(['/api/recommendations', '/api/top3-validation', '/api/target10', '/api/progress']);
 const json = (body, status = 200) => Response.json(body, {
   status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }
@@ -7,11 +8,18 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    if (url.pathname === '/api/ingest') {
+      if(url.search)return json({error:'query-not-supported'},400);
+      try{return await ingest(request,env);}catch{return json({error:'storage-unavailable'},503);}
+    }
     if (!routes.has(url.pathname)) return json({ error: 'not-found' }, 404);
     if (request.method !== 'GET') return json({ error: 'read-only' }, 405);
     // Never expose the Windows collection/refresh trigger to public requests.
     if (url.search) return json({ error: 'query-not-supported' }, 400);
     if (url.pathname === '/api/progress') return json({ status: 'idle', readOnly: true });
+    if (env.DB) {
+      try{return await readDataset(url.pathname.slice(5),env);}catch{return json({status:'storage-unavailable',message:'D1 저장 자료를 불러오지 못했습니다.',items:[]},503);}
+    }
     if (!env.DATA_API_BASE_URL) return json({
       available: false, status: 'not-connected', items: [], top3: [],
       message: '데이터 미연결 · Windows 수집 서버 연결 설정이 필요합니다.'

@@ -1,6 +1,13 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "toppick",
+  "account_id": "3a19eb09a951f7ade052638929276529",
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "toppick-data",
+    "database_id": "e8753fcd-295c-454e-9890-b105a9c60cd9",
+    "migrations_dir": "migrations"
+  }],
   "main": "web/worker.mjs",
   "compatibility_date": "2026-09-01",
   "build": { "command": "npm run build" },
