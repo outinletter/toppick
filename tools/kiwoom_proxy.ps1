@@ -2477,6 +2477,7 @@ function Get-DashboardHtml {
 @media(max-width:480px){.shell{padding:12px 8px 28px}.topbar{position:relative;display:block;padding-right:112px;margin-bottom:14px}.brandline{gap:6px}.brand h1{font-size:21px}.brand .sub{font-size:11px;margin-top:3px}.topbar>button{position:absolute;right:0;top:0;padding:9px 10px;font-size:11px}.statusbar{gap:6px}.metric{padding:10px 12px;gap:4px 8px}.metric .k{min-width:82px;font-size:11px}.metric .v{font-size:20px}.metric .s{font-size:11px;max-width:44%;text-align:right}.section-nav{overflow-x:auto;justify-content:flex-start;gap:4px;margin:10px 0 14px}.section-nav a{flex:0 0 auto;font-size:12px;padding:7px 9px}.notice{font-size:12px;line-height:1.5;padding:10px 11px;margin-bottom:12px}.flow-layout{gap:14px}.panel{border-radius:10px}.panel h2{padding:16px 14px 3px;font-size:18px}.section-kicker{font-size:10px;letter-spacing:.7px}.section-description{padding:3px 14px 13px;font-size:12px;line-height:1.55}.scroll{padding:0 8px 8px}tbody tr{padding:6px 11px;margin-bottom:8px;border-radius:9px}td,td.num{gap:8px;padding:7px 0!important;font-size:13px}td:before{font-size:11px;flex-basis:72px}.name{font-size:17px}.score{min-width:54px;padding:4px 7px;font-size:18px}.badge{padding:4px 8px;font-size:12px}.research-panel>summary{padding:15px 14px;font-size:14px}.modal-overlay{padding:6px}.modal-box{width:100%;border-radius:10px;max-height:96vh}.modal-header{padding:12px}.modal-title{font-size:14px;line-height:1.4}.modal-body{padding:12px}.detail-verdict{padding:12px 13px;margin-bottom:12px}.detail-verdict strong{font-size:15px}.detail-verdict span{font-size:12px}.detail-card{padding:12px 13px}.detail-title{font-size:12px}.detail-list li{font-size:13px;margin:4px 0}.detail-report{font-size:12px;padding:8px 0}}
 .detail-verdict{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;background:#f2f6ff;border:1px solid #d8e3fa;border-radius:10px;margin-bottom:18px}.detail-verdict strong{font-size:17px}.detail-verdict span{color:var(--muted);font-size:13px;text-align:right}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.detail-card{border:1px solid var(--line);border-radius:10px;padding:16px 18px}.detail-title{font-size:13px;font-weight:750;color:var(--muted);margin-bottom:9px}.detail-list{margin:0;padding-left:18px}.detail-list li{margin:6px 0;line-height:1.55}.detail-card.risk{background:#fff9f7}.detail-card.positive{background:#f7fbf9}.detail-reports{grid-column:1/-1}.detail-report{padding:10px 0;border-top:1px solid #e8edf4;line-height:1.55}.detail-report:first-of-type{border-top:0}.detail-empty{color:var(--muted)}
 @media(max-width:760px){.detail-verdict{align-items:flex-start;flex-direction:column}.detail-verdict span{text-align:left}.detail-grid{grid-template-columns:1fr}.detail-reports{grid-column:auto}}
+@media(max-width:760px){.mobile-detail-row{display:table-row!important}.mobile-detail-row>td{display:block!important;padding:0!important;border:0!important}.mobile-detail-row .detail-verdict{margin:0 0 10px}.mobile-detail-row .detail-card{margin-bottom:8px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
@@ -2626,18 +2627,31 @@ function openModal(rid){
 }
 function closeModal(){ modalOverlay.classList.remove('open'); }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+function mobileDetailId(rid){return `mobile-detail-${String(rid).replace(/[^a-zA-Z0-9_-]/g,'_')}`;}
+function activateDetail(rid,row){
+  if(window.matchMedia('(max-width:760px)').matches){
+    const id=mobileDetailId(rid);const old=document.getElementById(id);
+    if(old){old.remove();row.setAttribute('aria-expanded','false');return;}
+    const entry=modalStore.get(rid);if(!entry)return;
+    const detail=document.createElement('tr');detail.id=id;detail.className='mobile-detail-row';
+    const cell=document.createElement('td');cell.colSpan=row.children.length;cell.innerHTML=reasonHtml(entry.x,entry.horizon);
+    detail.appendChild(cell);row.parentNode.insertBefore(detail,row.nextSibling);row.setAttribute('aria-expanded','true');
+    detail.scrollIntoView({block:'nearest',behavior:'smooth'});return;
+  }
+  openModal(rid);
+}
 function itemRow(x,idPrefix){
   const s=x.signals||{};
   const rid=`${idPrefix}-${x.code||x.name}`;
   modalStore.set(rid,{x,horizon:'short'});
   const coreReason=(x.reasons||[])[0]||"-";
-  return `<tr class="clickrow" tabindex="0" aria-label="${escapeHtml(x.name||x.code)} 상세 근거" onclick="openModal('${rid}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('${rid}')}"><td data-label="종목">${stockCell(x)}</td><td data-label="점수" class="num"><span class="score">${score(x).toFixed(1)}</span></td><td data-label="진입">${candidateEntryBadge(x)}</td><td data-label="핵심 사유">${coreReason}</td><td data-label="섹터">${sectorLabel(x.sectorRotationStatus||s.sectorRotationStatus)}</td><td data-label="RSI" class="num">${Number(s.rsi||x.rsi||0).toFixed(1)}</td><td data-label="이격" class="num">${pct(s.ma20Deviation??x.ma20Deviation)}</td><td data-label="거래대금" class="num">${fmt(s.averageTradingValue??x.averageTradingValue)}억</td></tr>`;
+  return `<tr class="clickrow" tabindex="0" aria-expanded="false" aria-label="${escapeHtml(x.name||x.code)} 상세 근거 열기" onclick="activateDetail('${rid}',this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();activateDetail('${rid}',this)}"><td data-label="종목">${stockCell(x)}</td><td data-label="점수" class="num"><span class="score">${score(x).toFixed(1)}</span></td><td data-label="진입">${candidateEntryBadge(x)}</td><td data-label="핵심 사유">${coreReason}</td><td data-label="섹터">${sectorLabel(x.sectorRotationStatus||s.sectorRotationStatus)}</td><td data-label="RSI" class="num">${Number(s.rsi||x.rsi||0).toFixed(1)}</td><td data-label="이격" class="num">${pct(s.ma20Deviation??x.ma20Deviation)}</td><td data-label="거래대금" class="num">${fmt(s.averageTradingValue??x.averageTradingValue)}억</td></tr>`;
 }
 function longItemRow(x,idPrefix){
   const rid=`${idPrefix}-${x.code||x.name}`;
   modalStore.set(rid,{x,horizon:'long'});
   const perPbr=`${x.per?Number(x.per).toFixed(1):"-"} / ${x.pbr?Number(x.pbr).toFixed(1):"-"}`;
-  return `<tr class="clickrow" tabindex="0" aria-label="${escapeHtml(x.name||x.code)} 상세 근거" onclick="openModal('${rid}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('${rid}')}"><td data-label="종목">${stockCell(x)}</td><td data-label="중기점수" class="num"><span class="score">${Number(x.longTermScore||0).toFixed(1)}</span><div class="sub">자료 ${x.mediumTerm?.dataCoveragePct??"미측정"}%</div></td><td data-label="진입">${longEntryBadge(x)}</td><td data-label="PER/PBR">${perPbr}</td><td data-label="리포트" class="num">${x.reportCount??"-"}</td><td data-label="섹터">${sectorLabel(x.sectorRotationStatus)}</td><td data-label="부채비율" class="num">${x.debtRatio!=null?pct(x.debtRatio):"-"}</td><td data-label="상승여력" class="num">${x.targetUpside!=null?signed(x.targetUpside):"-"}</td><td data-label="거래대금" class="num">${fmt(x.signals?.averageTradingValue)}억</td></tr>`;
+  return `<tr class="clickrow" tabindex="0" aria-expanded="false" aria-label="${escapeHtml(x.name||x.code)} 상세 근거 열기" onclick="activateDetail('${rid}',this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();activateDetail('${rid}',this)}"><td data-label="종목">${stockCell(x)}</td><td data-label="중기점수" class="num"><span class="score">${Number(x.longTermScore||0).toFixed(1)}</span><div class="sub">자료 ${x.mediumTerm?.dataCoveragePct??"미측정"}%</div></td><td data-label="진입">${longEntryBadge(x)}</td><td data-label="PER/PBR">${perPbr}</td><td data-label="리포트" class="num">${x.reportCount??"-"}</td><td data-label="섹터">${sectorLabel(x.sectorRotationStatus)}</td><td data-label="부채비율" class="num">${x.debtRatio!=null?pct(x.debtRatio):"-"}</td><td data-label="상승여력" class="num">${x.targetUpside!=null?signed(x.targetUpside):"-"}</td><td data-label="거래대금" class="num">${fmt(x.signals?.averageTradingValue)}억</td></tr>`;
 }
 function metric(k,v,s){return `<div class="metric"><div class="k">${k}</div><div class="v mono">${v}</div><div class="s">${s||""}</div></div>`}
 let metaBase="";let lastLoadClientTime=0;let isRunning=false;
