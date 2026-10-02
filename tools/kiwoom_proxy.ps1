@@ -2620,6 +2620,13 @@ const candidateEntryRank=x=>{
   return 2;
 };
 function decodeHtmlEntities(t){const el=document.createElement('textarea');el.innerHTML=String(t==null?'':t);return el.value;}
+function readableReportText(t){return decodeHtmlEntities(t)
+  .replace(/\bWHAT[’']S\s+THE\s+STORY\s*\?\s*/gi,'')
+  .replace(/\b12\s*m\s*(?:fwd|forward|f)(?=\s|EBITDA\b)/gi,'향후 12개월 예상')
+  .replace(/\bEBITDA\b/gi,'이자·세금·감가상각 차감 전 이익')
+  .replace(/\bTarget\s+multiple\b/gi,'목표 평가배수')
+  .replace(/\bYoY\b/gi,'전년 대비')
+  .replace(/\s+/g,' ').trim();}
 function escapeHtml(t){return String(t==null?"":t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function reasonHtml(x,horizon){
   const s=x.signals||{}; const positive=[]; const risk=[];
@@ -2652,7 +2659,7 @@ function reasonHtml(x,horizon){
     add(risk,Number(s.intradayReturn||0)>=8,`당일 상승 ${signed(s.intradayReturn)}`);
   }
   const state=horizon==='long'?longEntryState(x):candidateEntryState(x);
-  const reports=(x.reportHighlights||[]).slice(0,2).map(d=>{const text=decodeHtmlEntities(d);return `<div class="detail-report">${escapeHtml(text.length>150?text.slice(0,150)+'…':text)}</div>`}).join('');
+  const reports=(x.reportHighlights||[]).slice(0,2).map(d=>{const text=readableReportText(d);return `<div class="detail-report">${escapeHtml(text.length>150?text.slice(0,150)+'…':text)}</div>`}).join('');
   const list=items=>items.length?`<ul class="detail-list">${items.slice(0,5).map(v=>`<li>${escapeHtml(v)}</li>`).join('')}</ul>`:'<div class="detail-empty">확인된 항목 없음</div>';
   return `<div class="detail-verdict"><strong>${state.label}</strong><span>${escapeHtml(state.text.split(' · ').slice(0,2).join(' · '))}</span></div><div class="detail-grid"><section class="detail-card positive"><div class="detail-title">긍정 근거</div>${list(positive)}</section><section class="detail-card risk"><div class="detail-title">주의할 점</div>${list(risk)}</section><section class="detail-card detail-reports"><div class="detail-title">최신 리포트 ${x.reportCount?`· ${x.reportCount}건 중 2건`:''}</div>${reports||'<div class="detail-empty">표시할 리포트 없음</div>'}</section></div>`;
 }

@@ -2,6 +2,11 @@
 
 Last updated: 2026-09-22
 
+Report display normalization (2026-10-02): 12mF/12M Fwd, EBITDA, Target multiple
+and YoY are expanded into readable Korean before truncation and HTML escaping.
+WHAT'S THE STORY boilerplate is removed. Source reports and scoring inputs remain
+unchanged; this is a presentation-only transformation.
+
 Stock factor database added 2026-10-02: see StockFactorDatabase.md. New runs
 archive audited DART growth and normalized flow into local immutable SQLite;
 numeric/event imports preserve availability and collection timestamps. HBM
