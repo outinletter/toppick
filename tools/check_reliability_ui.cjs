@@ -16,12 +16,16 @@ const { chromium } = require(process.env.TOPPICKS_PLAYWRIGHT_PATH || 'playwright
         const url=new URL(route.request().url());
         if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:html});
         if(url.pathname==='/api/recommendations')return route.fulfill({contentType:'application/json',body:JSON.stringify({generatedAt:'synthetic fixture',recommendationDate:'2026-10-02',items:[],top3:[],mediumTerm:{items:[item],formulaVersion:'medium-term-v3-audited'}})});
+        if(url.pathname==='/api/medium-learning')return route.fulfill({contentType:'application/json',body:JSON.stringify({generatedAt:new Date().toISOString(),modelsTrained:3,validation:{'20':{brier:0.29,baselineBrier:0.25,nonOverlappingPeriods:5}}})});
         if(url.pathname.startsWith('/api/'))return route.fulfill({status:503,body:'unavailable'});
         return route.abort();
       });
       await page.goto('http://reliability.test/',{waitUntil:'networkidle'});
       const row=page.locator('#longItems .clickrow');
       if(!(await row.innerText()).includes('조건부 후보'))throw Error('Candidate state hidden');
+      await page.locator('#researchSection').evaluate(el=>{el.open=true});
+      const learning=await page.locator('#mediumLearningStatus').innerText();
+      if(!learning.includes('점수 미반영')||!learning.includes('0.290')||!learning.includes('0.250'))throw Error('Learning performance or zero-weight gate hidden');
       await row.click();
       if(errors.length)throw Error(JSON.stringify({width,errors}));
       const body=width===390?page.locator('.mobile-detail-row'):page.locator('#modalBody');

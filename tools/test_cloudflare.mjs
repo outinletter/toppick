@@ -24,6 +24,15 @@ test('D1 reads retain source age and return unavailable before initial upload',a
   env.DB.prepare=()=>({bind:()=>({first:async()=>({source_at:'2020-01-01T00:00:00Z',received_at:new Date().toISOString(),payload:'{"items":[]}'})})});
   assert.equal((await (await readDataset('recommendations',env)).json()).storage.stale,true);
 });
+test('learning dataset stays research-only and is readable from D1',async()=>{
+  const env={UPLOAD_TOKEN:'test-only',DB:{prepare(){return {bind(){return {first:async()=>({source_at:new Date().toISOString(),received_at:new Date().toISOString(),payload:JSON.stringify({version:'medium-price-learning-v1',productionEnabled:false,items:[]})})};}}},batch:async()=>{}}};
+  const make=productionEnabled=>new Request('https://test/api/ingest',{method:'POST',headers:{Authorization:'Bearer test-only'},body:JSON.stringify({kind:'medium-learning',sourceAt:new Date().toISOString(),data:{version:'medium-price-learning-v1',productionEnabled,items:[]}})});
+  assert.equal((await ingest(make(true),env)).status,400);
+  assert.equal((await ingest(make(false),env)).status,200);
+  const response=await worker.fetch(request('/api/medium-learning'),env);
+  assert.equal(response.status,200);assert.equal((await response.json()).productionEnabled,false);
+  assert.equal((await worker.fetch(request('/api/medium-learning?train=1'),env)).status,400);
+});
 test('unconnected data is unavailable, not an empty successful analysis', async () => {
   const r = await worker.fetch(request('/api/recommendations'), {});
   assert.equal(r.status, 503);

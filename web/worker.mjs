@@ -1,5 +1,5 @@
 import { ingest, readDataset } from './storage.mjs';
-const routes = new Set(['/api/recommendations', '/api/top3-validation', '/api/target10', '/api/progress']);
+const routes = new Set(['/api/recommendations', '/api/top3-validation', '/api/target10', '/api/medium-learning', '/api/progress']);
 const json = (body, status = 200) => Response.json(body, {
   status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }
 });

@@ -8,6 +8,14 @@ numeric/event imports preserve availability and collection timestamps. HBM
 profiles remain hypotheses and unconnected feeds remain missing. This does not
 fit sensitivities or replicate the entire factor history to D1.
 
+Actual price-factor learning added 2026-10-02: see MediumLearning.md.
+Three horizon models were fitted on 27 instruments using purged temporal
+training, independent calibration partitions and nonoverlapping test cohorts.
+All failed baseline probability diagnostics; score adjustment remains zero.
+Learned standardized price associations are archived locally, not HBM/earnings
+sensitivities. The authenticated medium-learning dataset and read-only route
+support dashboard publication after deployment; automatic retraining is disabled.
+
 ## Candidate status correction (2026-10-02)
 
 ### Reliability audit implementation

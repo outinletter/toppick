@@ -7,7 +7,7 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
-FILES = {'recommendations':'web-recommendations.json', 'top3-validation':'ai-top3-validation.json', 'target10':'target10/latest.json'}
+FILES = {'recommendations':'web-recommendations.json', 'top3-validation':'ai-top3-validation.json', 'target10':'target10/latest.json', 'medium-learning':'medium-learning/latest.json'}
 
 def publish(config_path):
     config=json.loads(Path(config_path).read_text(encoding='utf-8-sig'))

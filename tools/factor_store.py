@@ -141,8 +141,11 @@ def asof(db, code, decision_at):
         selected.setdefault(row['factor'], dict(row))
     profile = [dict(row) for row in db.execute('SELECT * FROM stock_profiles WHERE code=?', (code,))]
     events=[dict(row) for row in db.execute('SELECT * FROM events WHERE code=? AND published_at<=? AND collected_at<=? ORDER BY published_at DESC LIMIT 100',(code,decision,decision))]
+    has_learning=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='learned_sensitivities'").fetchone()
+    sensitivities=[dict(row) for row in db.execute('SELECT * FROM learned_sensitivities WHERE code=? AND available_at<=? ORDER BY available_at DESC,horizon,feature',(code,decision))] if has_learning else []
     return dict(code=code,decisionAt=decision,observations=list(selected.values()),profile=profile,
                 events=events,
+                learnedPriceSensitivities=sensitivities,priceSensitivityStatus='research-associations-only' if sensitivities else 'not-estimated',
                 missingProfileFactors=[row['factor'] for row in profile if row['factor'] not in selected],
                 sensitivityStatus='not-estimated',productionEnabled=False)
 

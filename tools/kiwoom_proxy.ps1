@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\upside_bridge.ps1"
 . "$PSScriptRoot\model_governance.ps1"
 . "$PSScriptRoot\medium_term.ps1"
+. "$PSScriptRoot\learning_bridge.ps1"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $appKeyPath = Join-Path $projectRoot 'key\44125103_appkey.txt'
 $secretKeyPath = Join-Path $projectRoot 'key\44125103_secretkey.txt'
@@ -1716,6 +1717,7 @@ function Invoke-RecommendationGeneration {
     $modelManifest=Get-ModelManifest $PSScriptRoot
     $collectionFailures=[Collections.Generic.List[object]]::new()
     $upsideEvidenceMap = Get-UpsideEvidenceMap (Join-Path $projectRoot 'reports\independent-upside\latest.json') ([datetimeoffset]$executionTime)
+    $mediumLearningReport=Get-MediumLearningReport (Join-Path $projectRoot 'reports\medium-learning\latest.json') ([datetimeoffset]$executionTime)
     if (-not $script:activeRunId) {
         $script:activeRunId = $executionTime.ToString('yyyyMMdd-HHmmss')
     }
@@ -1918,6 +1920,7 @@ function Invoke-RecommendationGeneration {
             $_ | Add-Member -NotePropertyName legacyRiseProbability -NotePropertyValue $_.riseProbability
             $_.riseProbability = $null
             $medium = Get-MediumTermAssessment $_ ([datetimeoffset]::Now)
+            $medium | Add-Member -NotePropertyName learningEvidence -NotePropertyValue (Get-MediumLearningEvidence $_ $mediumLearningReport)
             $_ | Add-Member -NotePropertyName mediumTerm -NotePropertyValue $medium
             $_ | Add-Member -NotePropertyName oneMonthScore -NotePropertyValue $medium.score
             $_ | Add-Member -NotePropertyName mediumTermScore -NotePropertyValue $medium.score
@@ -2278,6 +2281,7 @@ function Invoke-RecommendationGeneration {
         marketIndexes = $marketIndexes
         sectorRotation = $sectorRotation
         primaryHorizon = '1-3-months'
+        mediumLearning=$mediumLearningReport
         mediumTerm = [pscustomobject]@{
             dataQuality = Get-MediumQualitySummary @($mediumUniverse.ToArray())
             formulaVersion='medium-term-v3-audited';productionEnabled=$false;validationStatus='forward-tracking-only'
@@ -2532,6 +2536,8 @@ function Get-DashboardHtml {
     </section>
   </div>
   <details class="panel research-panel" id="researchSection"><summary>연구 모델 · 검증 데이터</summary>
+    <h2>1~3개월 가격 요인 학습</h2>
+    <p id="mediumLearningStatus" class="section-description">학습 결과 확인 중</p>
 
     <h2>비용 차감 +10% 목표 · 1~3거래일 연구 모델</h2>
     <div id="target10Status" class="panel-body" style="padding:8px 14px;color:var(--muted);font-size:12px">검증 결과 확인 중</div>
@@ -2627,6 +2633,7 @@ function reasonHtml(x,horizon){
     add(positive,m.components?.trend>0,'60일 이동평균 상승');
     add(risk,true,'과거 미사용 구간 검증 전 · 상승 확률 미산출');
     add(risk,true,'과거 실적 추정치 변경 API 미연결');
+    add(risk,m.learningEvidence?.status==='shadow-only','가격 요인 모델 학습 완료 · 검증·추가 성과 확인 전 점수 미반영');
     add(risk,(m.limitations||[]).includes('non-positive-operating-cash-flow'),'영업현금흐름이 0 이하 · 이익의 현금 전환 확인 필요');
     add(risk,(m.limitations||[]).includes('wide-broker-target-dispersion'),'증권사 목표가 편차가 큼 · 목표가 근거 불확실');
     add(positive,m.evidenceAudit?.netFlow20MarketCapPct>0,`20일 외국인·기관 순매수 / 시가총액 ${Number(m.evidenceAudit?.netFlow20MarketCapPct).toFixed(2)}%`);
@@ -2730,6 +2737,15 @@ async function load(){
   longItems.innerHTML=longPicks.map(x=>longItemRow(x,"l")).join("")||"<tr><td colspan='9' class='loading'>자료 기준을 충족하는 중기 후보가 없습니다.</td></tr>";
 }
 async function refresh(){if(globalThis.TOPPICKS_CLOUD){await Promise.all([load(),val(),loadTarget10()]);return;}meta.textContent="새 계산 요청됨";await fetch("/api/recommendations?refresh=1")}
+async function loadMediumLearning(){
+  const el=document.getElementById('mediumLearningStatus');
+  try{
+    const response=await fetch('/api/medium-learning');if(!response.ok)throw new Error('unavailable');const d=await response.json();
+    if(!d.generatedAt||!Number.isFinite(Date.parse(d.generatedAt))||Date.now()-Date.parse(d.generatedAt)>24*3600000||Date.parse(d.generatedAt)>Date.now()){el.textContent='학습 자료 갱신 필요 · 점수 미반영';return;}
+    const parts=[20,40,60].map(h=>{const v=d.validation?.[String(h)];return v?.brier!=null?`${h}일: 확률오차 ${Number(v.brier).toFixed(3)} / 단순 기준 ${Number(v.baselineBrier).toFixed(3)} · 비중복 ${v.nonOverlappingPeriods}기간`:`${h}일: 표본 부족`});
+    el.textContent=`학습 ${d.modelsTrained??0}개 · 점수 미반영 · 확률오차는 낮을수록 좋음. ${parts.join(' / ')} · 가격·거래량·시장 요인만 학습, HBM·실적 추정 이력 미연결`;
+  }catch{el.textContent='학습 결과 미연결 · 점수 미반영';}
+}
 async function val(){
   try{
     const r=await fetch("/api/top3-validation"); if(!r.ok)throw new Error('validation unavailable'); const d=await r.json(); const c=d.currentFormulaStatistics||{};
@@ -2755,7 +2771,7 @@ async function loadTarget10(){
   }catch(e){target10Status.textContent='연구 모델 결과를 불러오지 못했습니다';target10Items.innerHTML=''}
 }
 document.querySelector(".flow-layout").prepend(document.getElementById("longSection"));
-load();val();loadTarget10();
+load();val();loadTarget10();loadMediumLearning();
 if(globalThis.TOPPICKS_CLOUD)document.querySelector('button[onclick="refresh()"]').textContent='최신 자료 확인';
 const AUTO_REFRESH_MS=5*60*1000;
 const LIVE_POLL_MS=30*1000;
@@ -2805,6 +2821,7 @@ try {
             elseif ($path -match '^/api/top3-history(?:\?date=(\d{4}-\d{2}-\d{2}))?$') { $bytes=[Text.Encoding]::UTF8.GetBytes((Get-Top3History $Matches[1] | ConvertTo-Json -Depth 8 -Compress)); $type='application/json; charset=utf-8'; $status='200 OK' }
             elseif ($path -match '^/history/(\d{6})/(KOSPI|KOSDAQ)$') { $bytes=[Text.Encoding]::UTF8.GetBytes((Get-PerformanceHistory $Matches[1] $Matches[2] | ConvertTo-Json -Depth 5 -Compress)); $type='application/json; charset=utf-8'; $status='200 OK' }
             elseif ($path -eq '/api/target10') { $bytes=[Text.Encoding]::UTF8.GetBytes((Get-Target10Forecast | ConvertTo-Json -Depth 10 -Compress)); $type='application/json; charset=utf-8'; $status='200 OK' }
+            elseif ($path -eq '/api/medium-learning') { $bytes=[Text.Encoding]::UTF8.GetBytes((Get-MediumLearningReport (Join-Path $projectRoot 'reports\medium-learning\latest.json') | ConvertTo-Json -Depth 12 -Compress)); $type='application/json; charset=utf-8'; $status='200 OK' }
             elseif ($path -eq '/api/independent-upside') { $bytes=[Text.Encoding]::UTF8.GetBytes((Get-IndependentUpsideReport | ConvertTo-Json -Depth 20 -Compress)); $type='application/json; charset=utf-8'; $status='200 OK' }
             elseif ($path -eq '/health') { $bytes=[Text.Encoding]::UTF8.GetBytes('{"ok":true}'); $type='application/json'; $status='200 OK' }
             else { $bytes=[Text.Encoding]::UTF8.GetBytes('{"error":"Not found"}'); $type='application/json'; $status='404 Not Found' }

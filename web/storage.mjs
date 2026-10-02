@@ -1,4 +1,4 @@
-export const datasetKinds = new Set(['recommendations', 'top3-validation', 'target10']);
+export const datasetKinds = new Set(['recommendations', 'top3-validation', 'target10', 'medium-learning']);
 const reply = (data, status=200) => Response.json(data, {status,headers:{'Cache-Control':'no-store'}});
 const bytes = value => new TextEncoder().encode(value);
 const digest = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(value))), x=>x.toString(16).padStart(2,'0')).join('');
@@ -18,6 +18,7 @@ export async function ingest(request, env) {
   const {kind,sourceAt,data}=input||{};
   if(!datasetKinds.has(kind)||!data||typeof data!=='object'||Array.isArray(data))return reply({error:'invalid-dataset'},400);
   if(kind==='recommendations'&&(!Array.isArray(data.items)||!Array.isArray(data.mediumTerm?.items)))return reply({error:'invalid-recommendations'},400);
+  if(kind==='medium-learning'&&(data.version!=='medium-price-learning-v1'||data.productionEnabled!==false||!Array.isArray(data.items)))return reply({error:'invalid-learning-report'},400);
   if(typeof sourceAt!=='string'||!/(Z|[+-]\d\d:\d\d)$/.test(sourceAt)||!Number.isFinite(Date.parse(sourceAt))||Date.parse(sourceAt)>Date.now()+300000)return reply({error:'invalid-source-time'},400);
   const source=new Date(sourceAt).toISOString(),received=new Date().toISOString();
   const payload=JSON.stringify(data),hash=await digest(payload);
