@@ -2,6 +2,11 @@
 
 Last updated: 2026-09-22
 
+Progress API (2026-10-02): shared-delete file reads and bounded retries tolerate
+atomic replacement, missing files, locks and corrupt JSON. If generation owns
+the mutex, missing progress remains running; read errors remain unavailable,
+never falsely completed. Client-disconnect logs indicate cancelled responses.
+
 Mobile compact cards (2026-10-02): collapsed stock rows show name/code/market,
 score and entry state. Coverage and secondary metrics appear in the existing
 inline expansion with evidence. Desktop tables retain all columns.

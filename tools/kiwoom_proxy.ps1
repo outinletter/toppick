@@ -2447,7 +2447,25 @@ function Get-LatestRecommendations([bool]$Refresh = $false) {
 }
 
 function Get-RecommendationProgress {
-    if (Test-Path -LiteralPath $progressPath) { return Get-Content -Raw -LiteralPath $progressPath -Encoding UTF8 | ConvertFrom-Json }
+    $readFailed=$false
+    for($attempt=0;$attempt -lt 3;$attempt++){
+        $stream=$null;$reader=$null
+        try{
+            # Open directly: an existence check followed by a read races atomic replacement.
+            $stream=[IO.File]::Open($progressPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            $reader=[IO.StreamReader]::new($stream,[Text.Encoding]::UTF8,$true)
+            $progress=$reader.ReadToEnd()|ConvertFrom-Json
+            if(-not $progress -or $progress.status -notin @('idle','running','completed','failed')){throw 'Invalid progress record'}
+            return $progress
+        }catch [IO.FileNotFoundException] {
+            # It may be the first run or a transient replacement gap.
+        }catch [IO.DirectoryNotFoundException] {
+        }catch{$readFailed=$true}
+        finally{if($reader){$reader.Dispose()}elseif($stream){$stream.Dispose()}}
+        if($attempt -lt 2){Start-Sleep -Milliseconds 50}
+    }
+    if(Test-RecommendationBusy){return [pscustomobject]@{runId=$null;status='running';stage='progress-unavailable';stageName='진행 상태 확인 중';percent=0;completed=0;total=0;updatedAt=$null;message='분석은 실행 중이며 진행 상태 파일을 다시 확인하고 있습니다.'}}
+    if($readFailed){return [pscustomobject]@{runId=$null;status='unavailable';stage='progress-unavailable';stageName='상태 확인 필요';percent=0;completed=0;total=0;updatedAt=$null;message='진행 상태 파일을 읽지 못했습니다. 잠시 후 다시 확인합니다.'}}
     return [pscustomobject]@{ runId=$null; status='idle'; stage='idle'; stageName='대기'; percent=0; completed=0; total=0; updatedAt=$null; message='실행 중인 추천 분석이 없습니다.' }
 }
 
