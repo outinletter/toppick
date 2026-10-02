@@ -405,13 +405,19 @@ function Write-JsonAtomic([string]$Path, [object]$Value, [int]$Depth = 8) {
         ($Value | ConvertTo-Json -Depth $Depth),
         [Text.UTF8Encoding]::new($false)
     )
-    if ([IO.File]::Exists($Path)) {
-        [IO.File]::Replace($temporaryPath, $Path, [NullString]::Value)
-    } else {
-        try { [IO.File]::Move($temporaryPath, $Path) }
-        catch [IO.IOException] {
-            if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporaryPath, $Path, [NullString]::Value) } else { throw }
+    try {
+        for($attempt=0;$attempt -lt 6;$attempt++){
+            try {
+                if([IO.File]::Exists($Path)){[IO.File]::Replace($temporaryPath,$Path,[NullString]::Value)}
+                else{[IO.File]::Move($temporaryPath,$Path)}
+                return
+            } catch [IO.IOException] {
+                if($attempt -eq 5){throw "Atomic JSON save failed for '$Path'; previous result preserved. $($_.Exception.Message)"}
+                Start-Sleep -Milliseconds (80*($attempt+1))
+            }
         }
+    } finally {
+        if([IO.File]::Exists($temporaryPath)){[IO.File]::Delete($temporaryPath)}
     }
 }
 
@@ -936,7 +942,7 @@ function Get-AnalyzedStock([object]$Stock) {
         $financeMode = 'annual-fallback'
         $finance = Get-NaverJson "/api/stock/$($Stock.code)/finance/annual"
     }
-    $latestReports = @($reports | Where-Object { $_.brokerName } |
+    $latestReports = @($reports | Where-Object { $_.brokerName -and (Test-MediumDate $_.writeDate ([datetimeoffset]::Now) 90) } |
         Group-Object brokerName | ForEach-Object {
             $_.Group | Sort-Object writeDate -Descending | Select-Object -First 1
         })
@@ -957,7 +963,7 @@ function Get-AnalyzedStock([object]$Stock) {
                 $reportDateText = @($report.writeDate)[0]
                 $reportDate = [datetime]$reportDateText
                 $age = [math]::Max(0, ((Get-Date) - $reportDate).Days)
-                $targets += [pscustomobject]@{ value = $target; weight = 1 / (1 + $age / 30) }
+                $targets += [pscustomobject]@{ value = $target; weight = 1 / (1 + $age / 30);broker=[string]$report.brokerName;publishedAt=[string]$report.writeDate }
             }
         }
         if ($text -match '상향' -and $text -match '목표주가') {
@@ -1290,6 +1296,9 @@ function Get-AnalyzedStock([object]$Stock) {
         reportEvidence = [pscustomobject]@{
             latestPublishedAt = if($latestReports.Count){[string](($latestReports|Sort-Object writeDate -Descending|Select-Object -First 1).writeDate)}else{$null}
             uniqueBrokerCount = $latestReports.Count
+            targetBrokerCount = @($targets|Select-Object -ExpandProperty broker -Unique).Count
+            targetSources = @($targets)
+            targetDispersionPct = if($targets.Count -ge 2){$targetStats=$targets|Measure-Object value -Minimum -Maximum -Average;[math]::Round(100*($targetStats.Maximum-$targetStats.Minimum)/$targetStats.Average,2)}else{$null}
             method = 'published-report-targets-not-estimate-revision-history'
         }
         reportHighlights = $reportHighlights
@@ -2137,7 +2146,7 @@ function Invoke-RecommendationGeneration {
             shortTermVolatility = $shortTermVolatility
             riseProbability = $probability
             probabilityType = 'unvalidated-integrated-policy'
-            scoringFormulaVersion = 'short-term-v5-governed-evidence'
+            scoringFormulaVersion = 'short-term-v6-audited-reports'
             score = $_.score
             shortTermScore = $_.shortTermScore
             oneMonthScore = $_.oneMonthScore
@@ -2189,6 +2198,7 @@ function Invoke-RecommendationGeneration {
     })
     $entryReadyItems = @($items | Where-Object {
         [double]$_.shortTermScore -ge 45 -and
+            @($_.upsideEvidence.blockers | Where-Object { $_ }).Count -eq 0 -and
             $_.sectorRotationStatus -ne 'weak' -and
             [double]$_.signals.rsi -lt 80 -and
             [double]$_.signals.ma20Deviation -lt 18 -and
@@ -2256,7 +2266,7 @@ function Invoke-RecommendationGeneration {
         historicalReplaySafe = $false
         pitLevel = 'derived-snapshot'
         snapshotSchemaVersion = 1
-        scoringFormulaVersion = 'short-term-v5-governed-evidence'
+        scoringFormulaVersion = 'short-term-v6-audited-reports'
         governance = Get-RecommendationGovernance @($all|Where-Object {$_ -and $_.code}) @($items) $candidateTotal @($collectionFailures.ToArray()) $modelManifest (Get-ModelManifest $PSScriptRoot)
         generatedAtISO = ([datetimeoffset]::Now).ToString('o')
         candidateUniverse = $script:candidateUniverse
@@ -2270,7 +2280,8 @@ function Invoke-RecommendationGeneration {
         primaryHorizon = '1-3-months'
         mediumTerm = [pscustomobject]@{
             dataQuality = Get-MediumQualitySummary @($mediumUniverse.ToArray())
-            formulaVersion='medium-term-v2';productionEnabled=$false;validationStatus='not-evaluated'
+            formulaVersion='medium-term-v3-audited';productionEnabled=$false;validationStatus='forward-tracking-only'
+            modelFingerprint=$modelManifest.fingerprint
             horizonTradingDays=@(20,40,60)
             items=@(Select-MediumTermCandidates @($mediumUniverse.ToArray()))
         }
@@ -2290,10 +2301,21 @@ function Invoke-RecommendationGeneration {
     if(Test-Path -LiteralPath $mediumSnapshotPath){throw 'Medium-term snapshot already exists'}
     Write-JsonAtomic $mediumSnapshotPath ([ordered]@{
         generatedAt=([datetimeoffset]::Now).ToString('o');recommendationDate=$recommendationDate
-        formulaVersion='medium-term-v2';productionEnabled=$false
+        formulaVersion='medium-term-v3-audited';productionEnabled=$false
+        modelFingerprint=$modelManifest.fingerprint;sourceManifest=$modelManifest.files;sourceStableDuringRun=$result.governance.sourceStableDuringRun
         items=@($result.mediumTerm.items);costAssumptionBps=30;entryConvention='next-session-open'
     }) 12
-    $result.mediumTerm | Add-Member -NotePropertyName validation -NotePropertyValue (Update-MediumTermValidation $mediumSnapshotDir)
+    $result.mediumTerm | Add-Member -NotePropertyName validation -NotePropertyValue (Update-MediumTermValidation $mediumSnapshotDir $modelManifest.fingerprint)
+    Write-JsonAtomic $recommendationPath $result 12
+    $result.factorCollection=[pscustomobject]@{status='unavailable';sensitivityStatus='not-estimated';productionEnabled=$false}
+    if(Test-Path -LiteralPath $pykrxPythonPath){
+        try{
+            $factorResult=& $pykrxPythonPath (Join-Path $PSScriptRoot 'factor_store.py') --snapshot $recommendationPath
+            if($LASTEXITCODE -ne 0){throw 'Factor store ingestion failed'}
+            $factorData=$factorResult|ConvertFrom-Json
+            $result.factorCollection=[pscustomobject]@{status='stored';importedObservationCount=$factorData.importedObservationCount;totalObservationCount=$factorData.totalObservationCount;sensitivityStatus='not-estimated';productionEnabled=$false;unconnectedFactors=@('hbm_demand','hbm_supply','memory_price','customer_capex','usdkrw')}
+        }catch{$result.factorCollection=[pscustomobject]@{status='failed';sensitivityStatus='not-estimated';productionEnabled=$false}}
+    }
     Write-JsonAtomic $recommendationPath $result 12
     $pitDateDirectory = Join-Path $pitSnapshotRoot ($recommendationDate -replace '-', '')
     if (-not (Test-Path -LiteralPath $pitDateDirectory)) {
@@ -2504,7 +2526,7 @@ function Get-DashboardHtml {
     </section>
     <section class="panel" id="longSection">
       <h2><span class="section-kicker">1~3개월 · 20/40/60거래일</span>중기 상승 관찰 후보</h2>
-      <p class="section-description">실적·재무·기업가치·60일 추세를 평가합니다. 주 1회 재검토, 최대 60거래일 관찰 기준이며 상승을 보장하는 보유 기간은 아닙니다. 별도 성과 검증 전에는 연구·관망으로 표시합니다.</p>
+      <p class="section-description">실적·재무·기업가치·60일 추세를 평가합니다. 자료 부족·관망·조건부 후보를 구분하며, 조건부 후보도 성과 검증 대기 상태입니다. 주 1회 재검토, 최대 60거래일 관찰 기준입니다.</p>
       <div id="mediumValidation" class="section-description">중기 엔진 재계산 대기</div>
       <div class="scroll"><table class="tbl-long"><thead><tr><th>종목 / 시장</th><th class="num">중기점수</th><th>진입</th><th>PER/PBR</th><th>리포트</th><th>섹터</th><th class="num">부채비율</th><th class="num">상승여력</th><th class="num">거래대금</th></tr></thead><tbody id="longItems"><tr><td colspan="9" class="loading">로딩 중</td></tr></tbody></table></div>
     </section>
@@ -2575,7 +2597,15 @@ const candidateEntryState=x=>{
   return {label:"가능", cls:"b-buy", text:warnings.length?`주의 ${warnings.join(" · ")}`:"진입 가능 · 근접 사유 없음"};
 };
 const candidateEntryBadge=x=>{const e=candidateEntryState(x);return `<span class="badge ${e.cls}" title="${e.text}">${e.label}</span>`};
-const longEntryState=x=>({label:"연구·관망",cls:"b-watch",text:x.mediumTerm?`자료 충족 ${x.mediumTerm.dataCoveragePct??"미측정"}% · 상승 확률 미검증`:"중기 엔진 재계산 필요"});
+const longEntryState=x=>{
+  const m=x.mediumTerm;
+  if(!m)return {label:"자료 부족",cls:"b-watch",text:"중기 엔진 재계산 필요"};
+  const evidenceTime=Date.parse(m.evidenceAsOf);
+  if(!Number.isFinite(evidenceTime)||evidenceTime>Date.now()||Date.now()-evidenceTime>96*3600000)return {label:"자료 오래됨",cls:"b-block",text:"분석 시점 미확인·미래 또는 96시간 경과 · 재수집 필요"};
+  if((m.blockers||[]).some(v=>!['20-40-60-day-unused-data-validation-required','estimate-revision-api-not-connected'].includes(v))||!m.candidateEligible)return {label:"자료 부족",cls:"b-block",text:`자료 충족 ${m.dataCoveragePct??'미측정'}% · 가격·재무·위험 자료 확인 필요`};
+  if(m.entryStatus==='conditional-candidate')return {label:"조건부 후보",cls:"b-watch",text:"자료·점수·흑자·추세·유동성 조건 충족 · 성과 검증 대기"};
+  return {label:"관망",cls:"b-watch",text:"자료 충족 · 점수·흑자·추세·유동성 조건 재확인"};
+};
 const longEntryBadge=x=>{const e=longEntryState(x);return `<span class="badge ${e.cls}" title="${e.text}">${e.label}</span>`};
 const candidateEntryRank=x=>{
   const label=candidateEntryState(x).label;
@@ -2583,6 +2613,7 @@ const candidateEntryRank=x=>{
   if(label==="차단") return 1;
   return 2;
 };
+function decodeHtmlEntities(t){const el=document.createElement('textarea');el.innerHTML=String(t==null?'':t);return el.value;}
 function escapeHtml(t){return String(t==null?"":t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function reasonHtml(x,horizon){
   const s=x.signals||{}; const positive=[]; const risk=[];
@@ -2596,6 +2627,9 @@ function reasonHtml(x,horizon){
     add(positive,m.components?.trend>0,'60일 이동평균 상승');
     add(risk,true,'과거 미사용 구간 검증 전 · 상승 확률 미산출');
     add(risk,true,'과거 실적 추정치 변경 API 미연결');
+    add(risk,(m.limitations||[]).includes('non-positive-operating-cash-flow'),'영업현금흐름이 0 이하 · 이익의 현금 전환 확인 필요');
+    add(risk,(m.limitations||[]).includes('wide-broker-target-dispersion'),'증권사 목표가 편차가 큼 · 목표가 근거 불확실');
+    add(positive,m.evidenceAudit?.netFlow20MarketCapPct>0,`20일 외국인·기관 순매수 / 시가총액 ${Number(m.evidenceAudit?.netFlow20MarketCapPct).toFixed(2)}%`);
     const factorNames={earnings:'전년 동기 실적',reports:'리포트 목표가',financial:'재무 안정성',industryMomentum:'업종 흐름',valuation:'상대가치',trend:'추세',cashFlow:'영업현금흐름',flow20:'수급',riskPenalty:'위험 자료'};
     add(risk,(m.missingFactors||[]).length>0,`자료 부족: ${(m.missingFactors||[]).map(k=>factorNames[k]||k).join(', ')}`);
     add(risk,m.profitYoYPct!=null&&m.profitYoYPct<0,`전년 동기 영업이익 ${signed(m.profitYoYPct)}`);
@@ -2611,7 +2645,7 @@ function reasonHtml(x,horizon){
     add(risk,Number(s.intradayReturn||0)>=8,`당일 상승 ${signed(s.intradayReturn)}`);
   }
   const state=horizon==='long'?longEntryState(x):candidateEntryState(x);
-  const reports=(x.reportHighlights||[]).slice(0,2).map(d=>{const text=String(d);return `<div class="detail-report">${escapeHtml(text.length>150?text.slice(0,150)+'…':text)}</div>`}).join('');
+  const reports=(x.reportHighlights||[]).slice(0,2).map(d=>{const text=decodeHtmlEntities(d);return `<div class="detail-report">${escapeHtml(text.length>150?text.slice(0,150)+'…':text)}</div>`}).join('');
   const list=items=>items.length?`<ul class="detail-list">${items.slice(0,5).map(v=>`<li>${escapeHtml(v)}</li>`).join('')}</ul>`:'<div class="detail-empty">확인된 항목 없음</div>';
   return `<div class="detail-verdict"><strong>${state.label}</strong><span>${escapeHtml(state.text.split(' · ').slice(0,2).join(' · '))}</span></div><div class="detail-grid"><section class="detail-card positive"><div class="detail-title">긍정 근거</div>${list(positive)}</section><section class="detail-card risk"><div class="detail-title">주의할 점</div>${list(risk)}</section><section class="detail-card detail-reports"><div class="detail-title">최신 리포트 ${x.reportCount?`· ${x.reportCount}건 중 2건`:''}</div>${reports||'<div class="detail-empty">표시할 리포트 없음</div>'}</section></div>`;
 }
@@ -2682,15 +2716,16 @@ async function load(){
   metrics.innerHTML=[
     metric("KOSPI",idx(mi.KOSPI?.value),signed(mi.KOSPI?.changeRate)),
     metric("KOSDAQ",idx(mi.KOSDAQ?.value),signed(mi.KOSDAQ?.changeRate)),
-    metric("1~3개월 후보",d.mediumTerm?.items?.length??"미계산","성과 검증 전 · 연구·관망"),
+    metric("1~3개월 후보",d.mediumTerm?.items?.length??"미계산",`조건부 ${(d.mediumTerm?.items||[]).filter(x=>longEntryState(x).label==='조건부 후보').length}개 · 성과 검증 대기`),
     metric("자료 기준 통과",d.mediumTerm?.dataQuality?`${d.mediumTerm.dataQuality.eligibleCount}/${d.mediumTerm.dataQuality.analyzedCount}`:"미측정","충족도는 상승 확률이 아닙니다"),
   ].join("");
   const allItems=d.items||[];
   // 코스피·코스닥 구분 없이 상승 예상 점수가 가장 높은 종목을 그대로 상위 노출
   const shortPicks=allItems.slice().sort((a,b)=>score(b)-score(a)).slice(0,10);
   const longPicks=d.mediumTerm?.items||[];
-  const mtOutcomes=(d.mediumTerm?.validation?.items||[]).filter(x=>x.formulaVersion===d.mediumTerm?.formulaVersion).flatMap(x=>x.outcomes||[]);
-  document.getElementById('mediumValidation').textContent=d.mediumTerm?`20/40/60거래일 관측 완료: ${[20,40,60].map(h=>mtOutcomes.filter(x=>x.horizon===h&&x.status==='observed').length).join(' / ')}건 · 비용 가정 왕복 0.30% · 상승 확률 미검증`:'중기 엔진 재계산 필요';
+  const mtSummary=d.mediumTerm?.validation?.summary;
+  const mtStats=(mtSummary?.horizons||[]).map(h=>`${h.horizon}일: 겹치지 않는 ${h.nonOverlappingPeriodCount}기간${h.meanNetReturnPct!=null?` · 순수익 ${signed(h.meanNetReturnPct)} · 시장 초과 ${signed(h.meanBenchmarkExcessPct)} · 비용 2배 ${signed(h.meanStressedReturnPct)}`:''}`).join(' / ');
+  document.getElementById('mediumValidation').textContent=d.mediumTerm?`${mtStats||'현 모델 성과 재계산 필요'} · 기본 비용 왕복 0.30% 가정 · 독립성·상승 확률 미검증`:'중기 엔진 재계산 필요';
   shortItems.innerHTML=shortPicks.map(x=>itemRow(x,"s")).join("")||"<tr><td colspan='8' class='loading'>데이터 없음</td></tr>";
   longItems.innerHTML=longPicks.map(x=>longItemRow(x,"l")).join("")||"<tr><td colspan='9' class='loading'>자료 기준을 충족하는 중기 후보가 없습니다.</td></tr>";
 }

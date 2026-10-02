@@ -2,6 +2,57 @@
 
 Last updated: 2026-09-22
 
+Stock factor database added 2026-10-02: see StockFactorDatabase.md. New runs
+archive audited DART growth and normalized flow into local immutable SQLite;
+numeric/event imports preserve availability and collection timestamps. HBM
+profiles remain hypotheses and unconnected feeds remain missing. This does not
+fit sensitivities or replicate the entire factor history to D1.
+
+## Candidate status correction (2026-10-02)
+
+### Reliability audit implementation
+
+The new medium-term formula is `medium-term-v3-audited`; legacy short-term
+report filtering is versioned as `short-term-v6-audited-reports`. Snapshot code
+fingerprints isolate changed policies, and only snapshots with stable source
+code during generation contribute to current-model summary statistics.
+Financial dates must obey period end <= publication <= collection <= decision.
+Broker reports older than 90 days or future-dated are excluded before target
+calculation; two brokers with actual extracted targets are required for target
+scoring. Broker target provenance and dispersion are retained. Non-positive
+operating cash flow prevents conditional promotion. Market-cap-normalized
+20-day investor flow is recorded with explicit KRW/100-million-KRW units.
+
+Performance now includes double-cost returns and low-price adverse excursion.
+Invalid/nonfinite and duplicate price bars are unavailable outcomes. Cohorts
+with missing outcomes cannot silently drop failed stocks from averages.
+Current-fingerprint equal-weight signal-date cohorts are selected in order,
+skipping overlapping holding intervals. Their net, benchmark-excess and stressed
+returns are shown separately from raw observed stock counts. Nonoverlap does
+not imply independence, remove survivorship bias, or authorize production.
+No probability, statistical significance or automatic production approval is
+inferred. Analysis evidence older than 96 hours cannot display as a conditional
+candidate. Atomic JSON writes retry transient sharing conflicts while preserving
+the previous complete report and cleaning temporary files on failure.
+
+Reference definitions checked against OPENDART financial account documentation:
+https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2019020
+Temporal validation reference:
+https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html
+
+Medium-term states distinguish `data-insufficient`, `watchlist`, and
+`conditional-candidate`. Conditional candidates require existing dated evidence
+eligibility, score >=45, positive disclosed operating profit, rising MA60 and
+confirmed liquidity. This score threshold is an initial research rule, not an
+out-of-sample calibrated investment threshold. Missing paid estimate-revision
+history is disclosed as a limitation rather than a permanent data blocker.
+20/40/60-session unused-data validation remains a release requirement;
+productionEnabled remains false and no investment probability is inferred.
+Short-term entryReadyCount now includes independent-evidence blockers, matching
+the final entry gate. Independent evidence separately records data/risk blockers,
+validation requirements and execution-time quote requirements; final entry
+restrictions remain enforced. Historical snapshots are not rewritten.
+
 ## Cloudflare dashboard hosting
 
 The production Worker is bound to D1 `toppick-data`. Windows publishes stored recommendation,

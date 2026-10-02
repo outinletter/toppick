@@ -19,6 +19,8 @@
 
 function Get-IntegratedUpsideEvidence([object]$Candidate, [hashtable]$Map, [datetimeoffset]$DecisionAt) {
     $result = [ordered]@{ version='upside-integration-v1'; status='missing-or-stale'; adjustment=0.0;
+        dataBlockers=@('independent-evidence-missing-or-stale');riskBlockers=@();
+        validationRequirements=@('integrated-policy-unused-data-validation-required');executionRequirements=@('execution-time-quote-check-required');
         blockers=@('독립 상승 근거 미수집 또는 유효기간 경과'); components=$null; supports=@();
         sourceHash=$null; sourceGeneratedAt=$null; sourceAvailableAt=$null; priceAsOf=$null; sessionBasis=$null; validationStatus='new-policy-not-validated' }
     $key = "$($Candidate.market)|$($Candidate.code)"
@@ -45,6 +47,7 @@ function Get-IntegratedUpsideEvidence([object]$Candidate, [hashtable]$Map, [date
         if (-not $item.components.risk -or -not $item.components.priceVolume) { return [pscustomobject]$result }
     } catch { return [pscustomobject]$result }
     $result.status='available'; $result.sourceHash=$source.hash; $result.sourceGeneratedAt=$source.generatedAt
+    $result.dataBlockers=@()
     $result.priceAsOf=$item.priceAsOf; $result.sessionBasis=$sessionBasis
     $result.sourceAvailableAt=$item.sourceAvailableAt
     $result.components=$item.components
@@ -56,6 +59,7 @@ function Get-IntegratedUpsideEvidence([object]$Candidate, [hashtable]$Map, [date
     if (@($item.components.catalysts.risks | Where-Object { $null -ne $_ }).Count -gt 0) { $adjustment -= 6 }
     $result.adjustment=[math]::Max(-6,[math]::Min(6,$adjustment))
     $result.blockers=@($item.entryBlockers | ForEach-Object { "독립 근거: $_" })
+    $result.riskBlockers=@($result.blockers)
     # A previous price snapshot cannot certify execution-time quotes.
     $result.blockers+=@('진입 시점 호가 재확인 필요','통합 추천 정책 미사용 데이터 검증 필요')
     return [pscustomobject]$result
