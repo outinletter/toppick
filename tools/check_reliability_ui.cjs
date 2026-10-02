@@ -24,6 +24,7 @@ const { chromium } = require(process.env.TOPPICKS_PLAYWRIGHT_PATH || 'playwright
       await page.goto('http://reliability.test/',{waitUntil:'networkidle'});
       const row=page.locator('#longItems .clickrow');
       if(!(await row.innerText()).includes('조건부 후보'))throw Error('Candidate state hidden');
+      if(width===390){const box=await row.boundingBox();if(box.height>125)throw Error(`Mobile card too tall: ${box.height}`);if(await row.locator('td:nth-child(4)').isVisible())throw Error('Secondary metrics not collapsed');console.log(`Mobile collapsed card: ${Math.round(box.height)}px`);}
       await page.locator('#researchSection').evaluate(el=>{el.open=true});
       const learning=await page.locator('#mediumLearningStatus').innerText();
       if(!learning.includes('점수 미반영')||!learning.includes('0.290')||!learning.includes('0.250'))throw Error('Learning performance or zero-weight gate hidden');
@@ -31,6 +32,7 @@ const { chromium } = require(process.env.TOPPICKS_PLAYWRIGHT_PATH || 'playwright
       if(errors.length)throw Error(JSON.stringify({width,errors}));
       const body=width===390?page.locator('.mobile-detail-row'):page.locator('#modalBody');
       if(!(await body.innerText()).includes('성과 검증 대기'))throw Error('Validation limitation hidden');
+      if(width===390&&!(await body.locator('.mobile-stock-metrics').innerText()).includes('PER/PBR'))throw Error('Expanded metrics missing');
       const report=await body.locator('.detail-report').innerText();
       if(!report.includes('향후 12개월 예상 이자·세금·감가상각 차감 전 이익')||report.includes('12mF')||report.includes('&nbsp;')||report.includes('WHAT'))throw Error('Report jargon not normalized');
       const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);

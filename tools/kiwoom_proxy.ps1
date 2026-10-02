@@ -2504,6 +2504,22 @@ function Get-DashboardHtml {
 .detail-verdict{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;background:#f2f6ff;border:1px solid #d8e3fa;border-radius:10px;margin-bottom:18px}.detail-verdict strong{font-size:17px}.detail-verdict span{color:var(--muted);font-size:13px;text-align:right}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.detail-card{border:1px solid var(--line);border-radius:10px;padding:16px 18px}.detail-title{font-size:13px;font-weight:750;color:var(--muted);margin-bottom:9px}.detail-list{margin:0;padding-left:18px}.detail-list li{margin:6px 0;line-height:1.55}.detail-card.risk{background:#fff9f7}.detail-card.positive{background:#f7fbf9}.detail-reports{grid-column:1/-1}.detail-report{padding:10px 0;border-top:1px solid #e8edf4;line-height:1.55}.detail-report:first-of-type{border-top:0}.detail-empty{color:var(--muted)}
 @media(max-width:760px){.detail-verdict{align-items:flex-start;flex-direction:column}.detail-verdict span{text-align:left}.detail-grid{grid-template-columns:1fr}.detail-reports{grid-column:auto}}
 @media(max-width:760px){.mobile-detail-row{display:table-row!important}.mobile-detail-row>td{display:block!important;padding:0!important;border:0!important}.mobile-detail-row .detail-verdict{margin:0 0 10px}.mobile-detail-row .detail-card{margin-bottom:8px}}
+@media(max-width:760px){
+  .tbl-long .clickrow,.tbl-short .clickrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:12px!important;margin-bottom:8px;min-height:88px}
+  .tbl-long .clickrow>td,.tbl-short .clickrow>td{border:0;padding:0!important;min-width:0;max-width:none;display:block;text-align:right}
+  .tbl-long .clickrow>td:first-child,.tbl-short .clickrow>td:first-child{grid-column:1;grid-row:1/3;text-align:left;align-self:center}
+  .tbl-long .clickrow>td:nth-child(2),.tbl-short .clickrow>td:nth-child(2){grid-column:2;grid-row:1}
+  .tbl-long .clickrow>td:nth-child(3),.tbl-short .clickrow>td:nth-child(3){grid-column:2;grid-row:2}
+  .tbl-long .clickrow>td:nth-child(n+4),.tbl-short .clickrow>td:nth-child(n+4){display:none}
+  .tbl-long .clickrow>td:before,.tbl-short .clickrow>td:before,.clickrow .sub{display:none}
+  .clickrow .name{font-size:17px;line-height:1.35}.clickrow .code{font-size:11px;margin-top:5px}
+  .clickrow .score{font-size:18px;min-width:50px;padding:2px 6px}.clickrow .badge{font-size:11px;padding:3px 6px}
+  .tbl-long .clickrow>td:nth-child(3):after,.tbl-short .clickrow>td:nth-child(3):after{content:'⌄';margin-left:5px;color:var(--muted)}
+  .clickrow[aria-expanded=true]>td:nth-child(3):after{content:'⌃'}
+  .mobile-detail-row{display:block!important;padding:12px!important}
+  .mobile-stock-metrics{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px 12px;margin:0 0 14px;font-size:12px}
+  .mobile-stock-metrics dt{color:var(--muted)}.mobile-stock-metrics dd{margin:0;text-align:right;overflow-wrap:anywhere}
+}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
@@ -2683,6 +2699,11 @@ function activateDetail(rid,row){
     const entry=modalStore.get(rid);if(!entry)return;
     const detail=document.createElement('tr');detail.id=id;detail.className='mobile-detail-row';
     const cell=document.createElement('td');cell.colSpan=row.children.length;cell.innerHTML=reasonHtml(entry.x,entry.horizon);
+    const metrics=document.createElement('dl');metrics.className='mobile-stock-metrics';
+    const addMetric=(label,value)=>{const dt=document.createElement('dt');dt.textContent=label;const dd=document.createElement('dd');dd.textContent=value;metrics.append(dt,dd);};
+    const coverage=row.querySelector('.sub');if(coverage)addMetric('자료 충족',coverage.textContent);
+    Array.from(row.children).slice(3).forEach(td=>addMetric(td.dataset.label||'',td.textContent));
+    cell.prepend(metrics);
     detail.appendChild(cell);row.parentNode.insertBefore(detail,row.nextSibling);row.setAttribute('aria-expanded','true');
     detail.scrollIntoView({block:'nearest',behavior:'smooth'});return;
   }

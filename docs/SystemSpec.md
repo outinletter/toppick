@@ -2,6 +2,10 @@
 
 Last updated: 2026-09-22
 
+Mobile compact cards (2026-10-02): collapsed stock rows show name/code/market,
+score and entry state. Coverage and secondary metrics appear in the existing
+inline expansion with evidence. Desktop tables retain all columns.
+
 Report display normalization (2026-10-02): 12mF/12M Fwd, EBITDA, Target multiple
 and YoY are expanded into readable Korean before truncation and HTML escaping.
 WHAT'S THE STORY boilerplate is removed. Source reports and scoring inputs remain
